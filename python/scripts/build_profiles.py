@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import re
 import time
+from pathlib import Path
 
 from ..common.config import force_utf8_stdout
 from ..common.db import get_client, normalize_term
@@ -75,6 +76,29 @@ SCHEMA = {
     },
 }
 
+MAJOR_STOCKS_FILE = Path(__file__).resolve().parent.parent / "data" / "major_stocks.txt"
+
+
+def load_major_stock_codes() -> list[str]:
+    """주요 종목 목록에서 종목코드만 읽는다.
+
+    companies 테이블에 시가총액이 없어 "큰 기업부터" 정렬이 불가능하다.
+    정렬 없이 뽑으면 사업보고서를 내지 않는 껍데기 상장사가 먼저 걸리므로
+    우량주는 이 목록으로 명시한다.
+    """
+    codes: list[str] = []
+    for line in MAJOR_STOCKS_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        code = line.split()[0]
+        if len(code) == 6 and code.isdigit():
+            codes.append(code)
+    if not codes:
+        raise SystemExit(f"{MAJOR_STOCKS_FILE} 에서 종목코드를 읽지 못했습니다.")
+    return codes
+
+
 _WS = re.compile(r"\s+")
 
 
@@ -94,7 +118,7 @@ def excerpt_is_grounded(excerpt: str, source: str) -> bool:
     return _loose(excerpt) in _loose(source)
 
 
-def build_one(supabase, company: dict, dry_run: bool = False) -> int:
+def build_one(supabase, company: dict, dry_run: bool = False, tier: str = "cheap") -> int:
     corp_code = company["corp_code"]
     company_id = company["id"]
     name = company["company_name"]
@@ -136,7 +160,7 @@ def build_one(supabase, company: dict, dry_run: bool = False) -> int:
 
     for index, chunk in enumerate(chunks):
         user = f"기업명: {name}\n\n=== 사업보고서 발췌 ({index + 1}/{len(chunks)}) ===\n{chunk}\n=== 발췌 끝 ==="
-        result = structured(SYSTEM, user, SCHEMA, "company_profile", tier="standard")
+        result = structured(SYSTEM, user, SCHEMA, "company_profile", tier=tier)
         record_call(supabase, "company_profile", result, company_id=company_id)
 
         if not summary:
@@ -214,7 +238,29 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--stock-code", type=str, default=None, help="특정 종목만")
+    parser.add_argument(
+        "--stock-codes",
+        type=str,
+        default=None,
+        help="여러 종목을 쉼표로. 예) 005930,000660,005490",
+    )
+    parser.add_argument(
+        "--major",
+        action="store_true",
+        help=f"주요 종목 목록({MAJOR_STOCKS_FILE.name})에서 아직 안 채운 것부터",
+    )
     parser.add_argument("--dry-run", action="store_true", help="저장하지 않고 결과만 출력")
+    parser.add_argument(
+        "--tier",
+        choices=["cheap", "standard"],
+        default="cheap",
+        help=(
+            "기본 cheap. 발췌를 원문과 대조해 지어낸 항목을 폐기하므로(excerpt_is_grounded) "
+            "약한 모델은 틀린 데이터가 아니라 적은 데이터를 낸다. "
+            "게다가 Gemini 무료 티어는 standard 모델이 하루 20회뿐이라 "
+            "기업 1개(최대 5청크)에 4개면 소진된다."
+        ),
+    )
     args = parser.parse_args()
 
     supabase = get_client()
@@ -231,8 +277,23 @@ def main() -> None:
     )
     if args.stock_code:
         query = query.eq("stock_code", args.stock_code)
+    elif args.stock_codes:
+        codes = [c.strip() for c in args.stock_codes.split(",") if c.strip()]
+        query = query.in_("stock_code", codes)
+    elif args.major:
+        codes = load_major_stock_codes()
+        # 이미 채운 종목은 건너뛴다. 며칠에 나눠 돌려도 이어서 진행된다.
+        query = query.in_("stock_code", codes).eq("verification_status", "unverified").limit(args.limit)
     else:
-        query = query.eq("verification_status", "unverified").limit(args.limit)
+        # 정렬을 주지 않으면 Postgres 가 임의 순서로 돌려주는데, 실제로 돌려보면
+        # 사업보고서를 내지 않는 껍데기 상장사가 먼저 걸려 5건 전부 공치기도 한다.
+        # 종목코드 순은 의미 있는 우선순위는 아니지만 최소한 재현 가능하다.
+        # 주요 종목부터 채우려면 --stock-codes 로 직접 지정할 것.
+        query = (
+            query.eq("verification_status", "unverified")
+            .order("stock_code")
+            .limit(args.limit)
+        )
 
     companies = query.execute().data or []
     log.info("프로필 생성 시작", count=len(companies), budget_left=round(budget - spent, 4))
@@ -240,7 +301,7 @@ def main() -> None:
     total = 0
     for company in companies:
         try:
-            total += build_one(supabase, company, dry_run=args.dry_run)
+            total += build_one(supabase, company, dry_run=args.dry_run, tier=args.tier)
         except DartError as err:
             log.warn("DART 오류", company=company["company_name"], err=str(err))
         except Exception as err:  # noqa: BLE001
