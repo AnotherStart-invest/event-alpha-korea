@@ -1,16 +1,22 @@
 name: Pipeline cron
 
 # Vercel Hobby 의 cron 은 하루 1회가 최대이므로 GitHub Actions 로 돌린다.
-# 명목상 간격이지만 실제로는 5~20분 지연이 흔하다. 정시성 보장은 없다.
+# **명목상 5분이지 실제로는 5~20분 지연이 흔하고, 러너가 붐비면 아예 건너뛴다.**
+# GitHub Actions 스케줄러는 정시성을 보장하지 않는다. 5분은 상한이지 보장치가 아니다.
 #
 # 주기는 네이버 API 무료 할당량에 직결된다. 1회 수집 = KEYWORDS_PER_TICK(8) 회 호출.
-#   1시간  → 하루 24회 × 8 =  192 호출  (현재 설정, 무료량 안전)
-#   15분   → 하루 96회 × 8 =  768 호출
-# 올리기 전에 NCP 콘솔에서 남은 할당량을 먼저 확인할 것.
-# 감시 키워드가 40개이므로 1시간 주기면 전체 한 바퀴에 5시간 걸린다.
+#   1시간  → 하루  24회 × 8 =   192 호출
+#   15분   → 하루  96회 × 8 =   768 호출
+#   5분    → 하루 288회 × 8 = 2,304 호출  ← 현재 설정
+# 감시 키워드 40개 / tick 당 8개이므로 5분 주기면 전체 한 바퀴에 25분 걸린다.
+#
+# ⚠️ 네이버 API HUB 의 무료 할당량은 문서에 명시돼 있지 않다("한시적 무료").
+# 구 검색 API 는 하루 25,000회였고 그 기준이면 2,304 는 9% 수준이라 여유가 있지만,
+# 확인된 값이 아니다. NCP 콘솔에서 실제 사용량을 한 번은 눈으로 볼 것.
+# 줄여야 하면 이 cron 을 '*/15' 로 되돌리거나 KEYWORDS_PER_TICK 을 낮춘다.
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       job:
@@ -18,7 +24,7 @@ on:
         required: true
         default: 'all'
         type: choice
-        options: [all, collect, cluster, mentions, analyze]
+        options: [all, collect, cluster, mentions, peers, transmission, analyze]
 
 concurrency:
   group: pipeline-cron
@@ -55,5 +61,24 @@ jobs:
         if: github.event.inputs.job == '' || github.event.inputs.job == 'all' || github.event.inputs.job == 'analyze'
         run: |
           curl -sS -f -X POST "${{ secrets.APP_URL }}/api/cron/analyze" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120 | tee /dev/stderr
+
+      # LLM 을 쓴다(이벤트당 cheap 1회). events.traced_at 이 있어 이벤트마다 한 번만
+      # 호출되므로, 하루 호출량은 tick 수가 아니라 **새로 생긴 이벤트 수**에 비례한다.
+      # 한도가 소진되면 QuotaExceededError 로 배치가 즉시 멈춘다.
+      - name: 전파 경로 추적
+        if: github.event.inputs.job == '' || github.event.inputs.job == 'all' || github.event.inputs.job == 'transmission'
+        run: |
+          curl -sS -f -X POST "${{ secrets.APP_URL }}/api/cron/transmission" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120 | tee /dev/stderr
+
+      # 맨 뒤에 둔다. 앞선 세 잡(mentions/analyze/transmission)이 붙인 종목을
+      # 씨앗으로 삼아 같은 제품군을 한 발 더 뻗기 때문이다. LLM 은 쓰지 않는다.
+      - name: 동종 종목 확장
+        if: github.event.inputs.job == '' || github.event.inputs.job == 'all' || github.event.inputs.job == 'peers'
+        run: |
+          curl -sS -f -X POST "${{ secrets.APP_URL }}/api/cron/peers" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             --max-time 120 | tee /dev/stderr
