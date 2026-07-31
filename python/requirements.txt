@@ -1,0 +1,6 @@
+requests>=2.32
+python-dotenv>=1.0
+supabase>=2.9
+anthropic>=0.40
+openai>=1.60
+pydantic>=2.9

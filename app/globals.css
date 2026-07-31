@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+/*
+ * 밝은 배경 고정. 금융 터미널 톤: 정보 밀도 높고 채도 낮음.
+ * 색은 긍정/부정에만 쓴다 (PRODUCT_SPEC §11).
+ */
+:root {
+  --background: #ffffff;
+  --surface: #fbfbfa;
+  --surface-muted: #f4f4f2;
+  --foreground: #16181d;
+  --muted: #6b7280;
+  --muted-strong: #4b5563;
+  --border: #e3e4e8;
+  --border-strong: #cbcdd4;
+
+  --positive: #0d7a4a;
+  --positive-bg: #e8f5ee;
+  --negative: #b4232c;
+  --negative-bg: #fdecec;
+  --neutral: #57606a;
+  --neutral-bg: #f0f1f3;
+  --warn: #9a6400;
+  --warn-bg: #fdf4e3;
+  --accent: #1e4d8c;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-positive: var(--positive);
+  --color-positive-bg: var(--positive-bg);
+  --color-negative: var(--negative);
+  --color-negative-bg: var(--negative-bg);
+  --color-neutral: var(--neutral);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-accent: var(--accent);
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  font-feature-settings: "tnum";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 숫자는 항상 고정폭으로 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 표가 좁은 화면에서 가로 스크롤될 때 컨테이너 안에서만 스크롤 */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

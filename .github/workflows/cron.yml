@@ -1,0 +1,44 @@
+name: Pipeline cron
+
+# Vercel Hobby 의 cron 은 하루 1회가 최대이므로 GitHub Actions 로 돌린다.
+# 명목상 5분 간격이지만 실제로는 5~20분 지연이 흔하다. 정시성 보장은 없다.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: '실행할 작업'
+        required: true
+        default: 'all'
+        type: choice
+        options: [all, collect, cluster, analyze]
+
+concurrency:
+  group: pipeline-cron
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 뉴스 수집
+        if: github.event.inputs.job == '' || github.event.inputs.job == 'all' || github.event.inputs.job == 'collect'
+        run: |
+          curl -sS -f -X POST "${{ secrets.APP_URL }}/api/cron/collect" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120 | tee /dev/stderr
+
+      - name: 이벤트 묶기
+        if: github.event.inputs.job == '' || github.event.inputs.job == 'all' || github.event.inputs.job == 'cluster'
+        run: |
+          curl -sS -f -X POST "${{ secrets.APP_URL }}/api/cron/cluster" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120 | tee /dev/stderr
+
+      - name: 이벤트 분석
+        if: github.event.inputs.job == '' || github.event.inputs.job == 'all' || github.event.inputs.job == 'analyze'
+        run: |
+          curl -sS -f -X POST "${{ secrets.APP_URL }}/api/cron/analyze" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120 | tee /dev/stderr
