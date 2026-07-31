@@ -35,7 +35,22 @@ export type EventCard = Pick<
   positiveCount: number;
   negativeCount: number;
   sourceCount: number;
+  /** 이 이벤트에 붙은 관련 종목 수 */
+  companyCount: number;
+  /** 카드에 미리 보여줄 상위 종목. 관련도 높은 순 */
+  topCompanies: Array<{ name: string; stockCode: string | null }>;
 };
+
+/**
+ * LLM 분석(전파 경로·방향 판정)이 아직 안 된 이벤트인가.
+ *
+ * 무료 티어에서는 분석 한도가 하루 10건이라 대부분의 이벤트가 이 상태로 남는다.
+ * 그래도 기사에 이름이 나온 종목은 붙어 있으므로(lib/events/mentions.ts)
+ * 화면은 "관련 종목 목록"까지만 보여주고 나머지 섹션은 감춘다.
+ */
+export function isAnalyzed(event: Pick<EventRow, 'factual_summary' | 'event_type'>): boolean {
+  return Boolean(event.factual_summary) && Boolean(event.event_type);
+}
 
 export type ImpactWithCompany = Pick<
   EventImpactRow,
@@ -87,7 +102,11 @@ export async function listPublishedEvents(options: {
 
   let query = supabase
     .from('events')
-    .select(`${CARD_COLUMNS}, event_impacts(impact_direction), event_articles(article_id)`)
+    .select(
+      `${CARD_COLUMNS},
+       event_impacts(impact_direction, relevance_score, company:companies(company_name, stock_code)),
+       event_articles(article_id)`,
+    )
     .eq('status', 'published')
     .order('published_at', { ascending: false })
     .limit(options.limit ?? 40);
@@ -97,18 +116,32 @@ export async function listPublishedEvents(options: {
   const { data, error } = await query;
   if (error) throw new Error(`이벤트 조회 실패: ${error.message}`);
 
+  type JoinedCompany = { company_name: string; stock_code: string | null };
   type Joined = EventCard & {
-    event_impacts: Array<{ impact_direction: ImpactDirection }> | null;
+    event_impacts: Array<{
+      impact_direction: ImpactDirection;
+      relevance_score: number;
+      company: JoinedCompany | JoinedCompany[] | null;
+    }> | null;
     event_articles: Array<{ article_id: string }> | null;
   };
 
   return ((data ?? []) as unknown as Joined[]).map((row) => {
     const impacts = row.event_impacts ?? [];
+    const topCompanies = [...impacts]
+      .sort((a, b) => b.relevance_score - a.relevance_score)
+      .map((i) => (Array.isArray(i.company) ? i.company[0] : i.company))
+      .filter((c): c is JoinedCompany => Boolean(c))
+      .slice(0, 4)
+      .map((c) => ({ name: c.company_name, stockCode: c.stock_code }));
+
     return {
       ...row,
       positiveCount: impacts.filter((i) => i.impact_direction === 'positive').length,
       negativeCount: impacts.filter((i) => i.impact_direction === 'negative').length,
       sourceCount: (row.event_articles ?? []).length,
+      companyCount: impacts.length,
+      topCompanies,
     };
   });
 }

@@ -43,6 +43,11 @@ export type CompanyRow = Timestamps & {
   verification_status: VerificationStatus;
   search_text: string | null;
   embedding: number[] | null;
+  /** KRX 상장목록에 현재 있는가. false 는 상장폐지 껍데기 (0004) */
+  is_listed: boolean;
+  /** KRX 상장목록의 "주요제품" 원문 (0004) */
+  main_products: string | null;
+  krx_synced_at: string | null;
 }
 
 export type EvidenceSourceRow = {
@@ -167,6 +172,11 @@ export type ScoreBreakdown = {
   disclosure: number;
   recency: number;
   thematic: number;
+  /**
+   * 기사에 이름이 직접 나와서 받은 점수 (lib/events/mentions.ts).
+   * 다른 항목과 달리 LLM 분석 없이도 채워지므로 나머지가 전부 0 일 수 있다.
+   */
+  mention?: number;
   total: number;
   notes: string[];
 }
@@ -247,6 +257,10 @@ export type AppSettingsRow = {
   collect_enabled: boolean;
   analyze_enabled: boolean;
   max_events_per_tick: number;
+  /** MVP 전용 — 사람 검수 없이 공개한다 (0004) */
+  auto_publish: boolean;
+  /** 기사 직접 언급 매칭 스위치 (0004) */
+  mentions_enabled: boolean;
   updated_at: string;
 }
 

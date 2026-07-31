@@ -18,7 +18,7 @@ on:
         required: true
         default: 'all'
         type: choice
-        options: [all, collect, cluster, analyze]
+        options: [all, collect, cluster, mentions, analyze]
 
 concurrency:
   group: pipeline-cron
@@ -39,6 +39,15 @@ jobs:
         if: github.event.inputs.job == '' || github.event.inputs.job == 'all' || github.event.inputs.job == 'cluster'
         run: |
           curl -sS -f -X POST "${{ secrets.APP_URL }}/api/cron/cluster" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120 | tee /dev/stderr
+
+      # LLM 을 안 쓰므로 예산·한도와 무관하다. analyze 앞에 둬서
+      # 분석 한도에 걸린 이벤트라도 관련 종목은 붙어 있게 한다.
+      - name: 관련 종목 연결
+        if: github.event.inputs.job == '' || github.event.inputs.job == 'all' || github.event.inputs.job == 'mentions'
+        run: |
+          curl -sS -f -X POST "${{ secrets.APP_URL }}/api/cron/mentions" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             --max-time 120 | tee /dev/stderr
 

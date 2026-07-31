@@ -50,6 +50,8 @@ export type ScoreBreakdown = {
   disclosure: number;
   recency: number;
   thematic: number;
+  /** 기사 직접 언급 점수. scoreCandidate 는 채우지 않는다 (lib/events/mentions.ts 전용) */
+  mention?: number;
   total: number;
   notes: string[];
 };

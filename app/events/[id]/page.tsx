@@ -1,11 +1,12 @@
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { ImpactTable } from '@/components/domain/impact-table';
+import { MentionTable } from '@/components/domain/mention-table';
 import { EventTypeBadge, EvidenceBadge, VariableDirectionMark } from '@/components/domain/badges';
 import { Card, CardContent, SectionTitle, Separator } from '@/components/ui/primitives';
 import { REQUIREMENT_TYPE_LABELS, TIME_HORIZON_LABELS } from '@/lib/db/enums';
 import { formatDateTime } from '@/lib/shared/format';
-import { getPublishedEvent, groupImpacts } from '@/lib/queries/events';
+import { getPublishedEvent, groupImpacts, isAnalyzed, type EventDetail } from '@/lib/queries/events';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,10 +29,7 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
   // 미승인 이벤트는 RLS 에서 0행이 되므로 여기서 404 가 된다 (I8)
   if (!detail) notFound();
 
-  const { event, articles, steps, requirements, impacts } = detail;
-  const groups = groupImpacts(impacts);
-  const byType = (type: keyof typeof REQUIREMENT_TYPE_LABELS) =>
-    requirements.filter((r) => r.requirement_type === type);
+  const { event } = detail;
 
   return (
     <article className="space-y-8">
@@ -43,29 +41,108 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
         </div>
         <h1 className="mt-2 text-xl font-bold leading-snug tracking-tight">{event.title}</h1>
 
-        <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border border-border bg-surface p-4 text-sm sm:grid-cols-4">
-          <div>
-            <dt className="text-xs text-muted">핵심 변수</dt>
-            <dd className="mt-0.5 flex items-center gap-1">
-              {event.primary_variable ?? '—'}
-              <VariableDirectionMark direction={event.variable_direction} />
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted">영향 기간</dt>
-            <dd className="mt-0.5">{TIME_HORIZON_LABELS[event.time_horizon]}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted">분석 확신도</dt>
-            <dd className="tnum mt-0.5">{event.event_confidence ?? '—'} / 100</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted">지역</dt>
-            <dd className="mt-0.5">{event.geography.join(', ') || '—'}</dd>
-          </div>
-        </dl>
+        {isAnalyzed(event) ? (
+          <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border border-border bg-surface p-4 text-sm sm:grid-cols-4">
+            <div>
+              <dt className="text-xs text-muted">핵심 변수</dt>
+              <dd className="mt-0.5 flex items-center gap-1">
+                {event.primary_variable ?? '—'}
+                <VariableDirectionMark direction={event.variable_direction} />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">영향 기간</dt>
+              <dd className="mt-0.5">{TIME_HORIZON_LABELS[event.time_horizon]}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">분석 확신도</dt>
+              <dd className="tnum mt-0.5">{event.event_confidence ?? '—'} / 100</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">지역</dt>
+              <dd className="mt-0.5">{event.geography.join(', ') || '—'}</dd>
+            </div>
+          </dl>
+        ) : null}
       </header>
 
+      {isAnalyzed(event) ? (
+        <AnalyzedSections detail={detail} />
+      ) : (
+        <MentionOnlySections detail={detail} />
+      )}
+
+      <p className="rounded-lg border border-border bg-surface-muted p-3 text-xs leading-relaxed text-muted">
+        이 페이지는 자동 생성되었으며 오류가 포함될 수 있습니다. 특정 종목의 매수·매도를 추천하지
+        않으며, 표시된 관련도는 데이터베이스상 근거의 강도를 나타낼 뿐 주가 전망이 아닙니다.
+        반드시 원문 기사와 전자공시를 직접 확인하십시오.
+      </p>
+    </article>
+  );
+}
+
+/**
+ * 기사에 이름이 나온 종목만 붙어 있는 상태의 화면.
+ *
+ * 무료 티어에서는 LLM 분석 한도가 하루 10건이라 대부분의 이벤트가 여기 해당한다.
+ * 전파 경로·방향 판정이 없으므로 그 섹션들을 빈 채로 늘어놓지 않고 감춘다.
+ */
+function MentionOnlySections({ detail }: { detail: EventDetail }) {
+  const { articles, impacts } = detail;
+
+  return (
+    <>
+      <section>
+        <SectionTitle index={1} hint={`${articles.length}건`}>
+          관련 기사
+        </SectionTitle>
+        <Card>
+          <CardContent className="pt-4">
+            <ul className="space-y-2">
+              {articles.map((article) => (
+                <li key={article.id} className="text-sm leading-relaxed">
+                  <a
+                    href={article.original_url ?? '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:underline underline-offset-2"
+                  >
+                    {article.title}
+                  </a>
+                  <span className="ml-1.5 text-xs text-muted">{article.source_name ?? '출처'} ↗</span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-3 border-t border-border pt-3">
+              <EvidenceBadge kind="news" />
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section>
+        <SectionTitle index={2} hint={`${impacts.length}종목`}>
+          기사에 언급된 상장사
+        </SectionTitle>
+        <p className="mb-2 text-xs text-muted">
+          기사 본문에 이름이 그대로 나온 종목입니다. 사전 대조로만 찾았으며, 영향의 방향이나
+          크기는 판정하지 않았습니다.
+        </p>
+        <MentionTable impacts={impacts} />
+      </section>
+    </>
+  );
+}
+
+/** 전체 분석이 끝난 이벤트의 화면 (PRODUCT_SPEC §6.2) */
+function AnalyzedSections({ detail }: { detail: EventDetail }) {
+  const { event, articles, steps, requirements, impacts } = detail;
+  const groups = groupImpacts(impacts);
+  const byType = (type: keyof typeof REQUIREMENT_TYPE_LABELS) =>
+    requirements.filter((r) => r.requirement_type === type);
+
+  return (
+    <>
       {/* 1. 사건 요약 */}
       <section>
         <SectionTitle index={1} hint="기사에 명시된 사실만">
@@ -182,13 +259,7 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
         />
         <RequirementList index={9} type="follow_up_event" items={byType('follow_up_event')} />
       </section>
-
-      <p className="rounded-lg border border-border bg-surface-muted p-3 text-xs leading-relaxed text-muted">
-        이 분석은 자동 생성되었으며 오류가 포함될 수 있습니다. 특정 종목의 매수·매도를 추천하지
-        않으며, 표시된 관련도는 데이터베이스상 근거의 강도를 나타낼 뿐 주가 전망이 아닙니다.
-        반드시 원문 기사와 전자공시를 직접 확인하십시오.
-      </p>
-    </article>
+    </>
   );
 }
 
