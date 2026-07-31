@@ -118,21 +118,46 @@ python -m python.scripts.bootstrap_admin
 
 ### 7. 파이프라인 실행
 
+잡은 6개이고 **이 순서로** 돌아야 한다. `.github/workflows/cron.yml` 이 5분마다 같은 순서로 호출한다.
+
+| 순서 | 잡 | LLM | 하는 일 |
+|---|---|---|---|
+| 1 | `collect` | — | 네이버 뉴스 수집. 1회 = 키워드 8개 호출 |
+| 2 | `cluster` | — | 같은 사건의 기사를 이벤트로 묶는다 (토큰 자카드) |
+| 3 | `mentions` | — | 기사에 **이름이 나온** 상장사를 붙인다 |
+| 4 | `analyze` | 이벤트당 2회 | 사전필터 → 구조화. 대부분 여기서 기각된다 |
+| 5 | `transmission` | 이벤트당 1회 | **전파 경로**를 그리고 그 경로에 걸리는 종목을 찾는다 |
+| 6 | `peers` | — | 앞 단계가 붙인 종목과 **같은 제품군**인 상장사를 한 발 더 |
+
+LLM 을 쓰는 두 잡(4·5)은 무료 티어 한도에 걸리면 배치를 즉시 멈춘다
+(`QuotaExceededError`). 나머지 넷은 한도·예산과 무관하므로 자주 돌려도 된다.
+
+`peers` 가 맨 뒤인 이유는 앞선 세 잡이 붙인 종목을 씨앗으로 삼기 때문이다.
+`transmission` 은 `events.traced_at` 으로 이벤트당 한 번만 호출된다 — 하루 LLM
+호출량이 실행 주기가 아니라 **새로 생긴 이벤트 수**에 비례한다.
+
 `/admin` 의 버튼으로 수동 실행하거나:
 
 ```bash
-curl -X POST http://localhost:3000/api/cron/collect
+curl -X POST http://localhost:3200/api/cron/collect
 ```
 
 ```bash
-curl -X POST http://localhost:3000/api/cron/cluster
-```
-
-```bash
-curl -X POST http://localhost:3000/api/cron/analyze
+curl -X POST http://localhost:3200/api/cron/transmission
 ```
 
 > 개발 환경에서는 `CRON_SECRET` 없이도 통과한다. 운영에서는 반드시 필요하다.
+
+### 8. 상장사 마스터 적재 (최초 1회)
+
+종목 매칭의 토대다. 이게 없으면 관련 종목이 하나도 안 붙는다.
+
+```bash
+python -m python.scripts.sync_krx
+```
+
+KRX 상장법인목록에서 2,700여 개 상장사의 **주요제품·업종**을 가져온다. 무료·무인증이고
+`company_exposures` 7,100여 건이 여기서 나온다. 3~6단계가 전부 이 데이터에 의존한다.
 
 ---
 
