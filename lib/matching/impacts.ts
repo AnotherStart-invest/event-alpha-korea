@@ -20,7 +20,8 @@ export type ValidatedImpact = {
   relationType: RelationType;
   relevanceScore: number;
   breakdown: ScoreBreakdown;
-  confidenceScore: number;
+  /** 방향 판정을 건너뛴 경우 null (deriveImpacts) */
+  confidenceScore: number | null;
   rationale: string;
   transmissionPath: string[];
   evidenceIds: string[];
@@ -132,6 +133,128 @@ export function validateImpacts(
   impacts.sort((a, b) => b.relevanceScore - a.relevanceScore);
   return { impacts, stats };
 }
+
+/* ── LLM 없이 확정하기 ─────────────────────────────────── */
+
+/** 노출 유형 → 관계 유형. 가장 강한 관계 하나를 고른다. */
+const RELATION_BY_EXPOSURE: Record<string, RelationType> = {
+  product: 'direct',
+  raw_material: 'direct',
+  commodity: 'direct',
+  project: 'direct',
+  subsidiary: 'direct',
+  customer: 'supply_chain',
+  customer_industry: 'supply_chain',
+  supplier: 'supply_chain',
+  competitor: 'competitor',
+  substitute: 'substitute',
+};
+const RELATION_RANK: RelationType[] = ['direct', 'supply_chain', 'competitor', 'substitute', 'indirect', 'thematic'];
+
+/**
+ * **LLM 을 부르지 않고** 후보를 그대로 관련 종목으로 확정한다.
+ *
+ * 방향(긍정·부정)은 판정하지 않는다. 그건 원래 두 번째 LLM 호출이 하던 일인데,
+ * 무료 티어에서 그걸 부르면 이벤트당 호출이 2배가 되어 하루 처리량이 반토막 난다.
+ * "이 이벤트와 무엇이 겹치는가"까지는 노출 데이터만으로 정직하게 말할 수 있고,
+ * "그래서 주가가 어느 쪽인가"는 말할 수 없으므로 uncertain 으로 남긴다.
+ *
+ * 점수·하드룰은 LLM 경로와 완전히 같은 함수를 쓴다. 두 경로의 점수가 달라지면
+ * 같은 화면에 섞였을 때 비교가 불가능해진다.
+ */
+export function deriveImpacts(
+  candidates: Candidate[],
+  query: EventQuery,
+  now = new Date(),
+): ValidationResult {
+  const stats: ValidationStats = {
+    received: candidates.length,
+    kept: 0,
+    droppedUnknownCompany: 0,
+    droppedNoStockCode: 0,
+    droppedBannedPhrase: 0,
+    demotedToThematic: 0,
+  };
+
+  const impacts: ValidatedImpact[] = [];
+
+  for (const candidate of candidates) {
+    const evidenceIds = Array.from(
+      new Set(candidate.exposures.map((e) => e.evidenceId).filter((id): id is string => id !== null)),
+    );
+    const breakdown = scoreCandidate(candidate, query, now);
+    const proposed = strongestRelation(candidate);
+    const ruled = applyHardRules(candidate, breakdown, proposed, evidenceIds.length);
+
+    if (ruled.excluded) {
+      stats.droppedNoStockCode++;
+      continue;
+    }
+    if (ruled.relationType === 'thematic' && proposed !== 'thematic') stats.demotedToThematic++;
+
+    stats.kept++;
+    impacts.push({
+      companyId: candidate.companyId,
+      companyName: candidate.companyName,
+      stockCode: candidate.stockCode!,
+      // 판정하지 않았다는 사실을 그대로 남긴다.
+      impactDirection: 'uncertain',
+      impactLevel: 'low',
+      relationType: ruled.relationType,
+      relevanceScore: ruled.score,
+      breakdown,
+      confidenceScore: null,
+      rationale: describeMatch(candidate),
+      transmissionPath: [],
+      evidenceIds,
+      missingEvidence: ['영향의 방향과 크기(실적 반영 규모)는 확인되지 않았습니다.'],
+      invalidationConditions: [],
+    });
+  }
+
+  impacts.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  return { impacts, stats };
+}
+
+function strongestRelation(candidate: Candidate): RelationType {
+  let best: RelationType = 'thematic';
+  for (const exposure of candidate.exposures) {
+    const relation = RELATION_BY_EXPOSURE[exposure.exposureType];
+    if (!relation) continue;
+    if (RELATION_RANK.indexOf(relation) < RELATION_RANK.indexOf(best)) best = relation;
+  }
+  return best;
+}
+
+/** 왜 걸렸는지를 노출 데이터 그대로 쓴다. 해석을 덧붙이지 않는다. */
+function describeMatch(candidate: Candidate): string {
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const exposure of candidate.exposures) {
+    const key = `${exposure.exposureType}:${exposure.exposureValue}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(`${EXPOSURE_LABELS[exposure.exposureType] ?? exposure.exposureType} "${exposure.exposureValue}"`);
+    if (parts.length >= 3) break;
+  }
+  const head = parts.length > 0 ? parts.join(', ') : '등록된 노출';
+  return `${head} 이(가) 이 이벤트의 영향 범위와 겹칩니다. 영향의 방향과 크기는 판정하지 않았습니다.`;
+}
+
+const EXPOSURE_LABELS: Record<string, string> = {
+  product: '주요제품',
+  raw_material: '원재료',
+  commodity: '원자재 노출',
+  customer: '고객사',
+  customer_industry: '고객 산업',
+  supplier: '공급사',
+  competitor: '경쟁사',
+  substitute: '대체재',
+  geography: '지역',
+  subsidiary: '자회사',
+  project: '주요 프로젝트',
+  policy: '정책 노출',
+};
 
 /* ── 프롬프트 입력 구성 ────────────────────────────────── */
 

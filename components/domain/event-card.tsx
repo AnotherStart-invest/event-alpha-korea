@@ -70,7 +70,7 @@ export function EventCard({ event, href }: { event: EventCardData; href?: string
         ) : null}
 
         <div className="mt-3 flex items-center justify-between border-t border-border pt-2.5 text-xs">
-          {analyzed ? (
+          {event.judged ? (
             <div className="flex items-center gap-3">
               <span className="text-positive">
                 긍정 <span className="tnum font-semibold">{event.positiveCount}</span>

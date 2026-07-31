@@ -37,6 +37,8 @@ export type EventCard = Pick<
   sourceCount: number;
   /** 이 이벤트에 붙은 관련 종목 수 */
   companyCount: number;
+  /** 종목별 방향까지 판정됐는가. 아니면 긍정/부정 대신 종목 수를 보여준다 */
+  judged: boolean;
   /** 카드에 미리 보여줄 상위 종목. 관련도 높은 순 */
   topCompanies: Array<{ name: string; stockCode: string | null }>;
 };
@@ -50,6 +52,16 @@ export type EventCard = Pick<
  */
 export function isAnalyzed(event: Pick<EventRow, 'factual_summary' | 'event_type'>): boolean {
   return Boolean(event.factual_summary) && Boolean(event.event_type);
+}
+
+/**
+ * 종목별 방향(긍정·부정)까지 LLM 이 판정했는가.
+ *
+ * app_settings.judge_impacts 가 꺼져 있으면 관련 종목은 붙되 전부 uncertain 이다.
+ * 그 경우 긍정/부정 섹션을 나눠 봐야 양쪽 다 비므로 한 표로 합쳐 보여준다.
+ */
+export function hasDirectionJudgement(impacts: ImpactWithCompany[]): boolean {
+  return impacts.some((impact) => impact.impact_direction !== 'uncertain');
 }
 
 export type ImpactWithCompany = Pick<
@@ -141,6 +153,7 @@ export async function listPublishedEvents(options: {
       negativeCount: impacts.filter((i) => i.impact_direction === 'negative').length,
       sourceCount: (row.event_articles ?? []).length,
       companyCount: impacts.length,
+      judged: impacts.some((i) => i.impact_direction !== 'uncertain'),
       topCompanies,
     };
   });

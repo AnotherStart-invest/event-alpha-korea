@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildCandidateBlock, chunkCandidates, validateImpacts } from '@/lib/matching/impacts';
+import {
+  buildCandidateBlock,
+  chunkCandidates,
+  deriveImpacts,
+  validateImpacts,
+} from '@/lib/matching/impacts';
 import type { Candidate, EventQuery, MatchedExposure } from '@/lib/matching/types';
 import type { ImpactJudgement } from '@/lib/llm/schemas';
 
@@ -245,5 +250,85 @@ describe('chunkCandidates', () => {
 
   it('빈 배열은 빈 청크', () => {
     expect(chunkCandidates([])).toEqual([]);
+  });
+});
+
+describe('deriveImpacts — LLM 없이 관련 종목 확정', () => {
+  it('후보를 그대로 관련 종목으로 만든다', () => {
+    const result = deriveImpacts([candidate()], query, NOW);
+    expect(result.impacts).toHaveLength(1);
+    expect(result.impacts[0].companyName).toBe('테스트전기');
+    expect(result.impacts[0].relationType).toBe('direct');
+  });
+
+  it('방향을 판정하지 않는다 — 근거가 없으므로 uncertain 으로 남긴다', () => {
+    const [impact] = deriveImpacts([candidate()], query, NOW).impacts;
+    expect(impact.impactDirection).toBe('uncertain');
+    expect(impact.confidenceScore).toBeNull();
+    expect(impact.transmissionPath).toEqual([]);
+    expect(impact.missingEvidence.join()).toContain('방향과 크기');
+  });
+
+  it('점수는 LLM 경로와 같은 함수로 매긴다', () => {
+    const [derived] = deriveImpacts([candidate()], query, NOW).impacts;
+    const [judged] = validateImpacts([judgement()], [candidate()], query, NOW).impacts;
+    expect(derived.relevanceScore).toBe(judged.relevanceScore);
+    expect(derived.breakdown.total).toBe(judged.breakdown.total);
+  });
+
+  it('노출 유형에서 관계 유형을 정한다', () => {
+    const supplyChain = candidate({
+      exposures: [exposure({ exposureType: 'customer', exposureValue: '현대제철' })],
+    });
+    expect(deriveImpacts([supplyChain], query, NOW).impacts[0].relationType).toBe('supply_chain');
+
+    const competitor = candidate({
+      exposures: [exposure({ exposureType: 'competitor', exposureValue: '경쟁사' })],
+    });
+    expect(deriveImpacts([competitor], query, NOW).impacts[0].relationType).toBe('competitor');
+  });
+
+  it('가장 강한 관계를 고른다', () => {
+    const mixed = candidate({
+      exposures: [
+        exposure({ id: 'e1', exposureType: 'competitor', exposureValue: '경쟁사' }),
+        exposure({ id: 'e2', exposureType: 'product', exposureValue: '변압기' }),
+      ],
+    });
+    expect(deriveImpacts([mixed], query, NOW).impacts[0].relationType).toBe('direct');
+  });
+
+  it('종목코드 없는 기업은 버린다 (R1)', () => {
+    const result = deriveImpacts([candidate({ stockCode: null })], query, NOW);
+    expect(result.impacts).toHaveLength(0);
+    expect(result.stats.droppedNoStockCode).toBe(1);
+  });
+
+  it('공시·매출 근거가 없으면 thematic 으로 강등한다 (R2)', () => {
+    const weak = candidate({
+      exposures: [
+        exposure({ revenueShare: null, evidenceId: null, evidenceSourceType: null, verified: false }),
+      ],
+    });
+    const [impact] = deriveImpacts([weak], query, NOW).impacts;
+    expect(impact.relationType).toBe('thematic');
+    expect(impact.relevanceScore).toBeLessThanOrEqual(39);
+  });
+
+  it('왜 걸렸는지를 노출 값 그대로 설명한다', () => {
+    const [impact] = deriveImpacts([candidate()], query, NOW).impacts;
+    expect(impact.rationale).toContain('변압기');
+    expect(impact.rationale).toContain('주요제품');
+  });
+
+  it('점수 순으로 정렬한다', () => {
+    const weak = candidate({
+      companyId: 'company-b',
+      companyName: '약한전기',
+      stockCode: '000002',
+      exposures: [exposure({ id: 'e2', matchKind: 'fulltext', revenueShare: null })],
+    });
+    const impacts = deriveImpacts([weak, candidate()], query, NOW).impacts;
+    expect(impacts[0].companyName).toBe('테스트전기');
   });
 });

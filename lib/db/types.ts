@@ -261,6 +261,10 @@ export type AppSettingsRow = {
   auto_publish: boolean;
   /** 기사 직접 언급 매칭 스위치 (0004) */
   mentions_enabled: boolean;
+  /** LLM 으로 종목별 긍정·부정까지 판정할 것인가. 켜면 이벤트당 호출이 2배 (0005) */
+  judge_impacts: boolean;
+  /** 이벤트 구조화 모델 티어 (0005) */
+  structure_tier: 'cheap' | 'standard';
   updated_at: string;
 }
 

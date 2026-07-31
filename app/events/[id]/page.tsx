@@ -6,7 +6,13 @@ import { EventTypeBadge, EvidenceBadge, VariableDirectionMark } from '@/componen
 import { Card, CardContent, SectionTitle, Separator } from '@/components/ui/primitives';
 import { REQUIREMENT_TYPE_LABELS, TIME_HORIZON_LABELS } from '@/lib/db/enums';
 import { formatDateTime } from '@/lib/shared/format';
-import { getPublishedEvent, groupImpacts, isAnalyzed, type EventDetail } from '@/lib/queries/events';
+import {
+  getPublishedEvent,
+  groupImpacts,
+  hasDirectionJudgement,
+  isAnalyzed,
+  type EventDetail,
+} from '@/lib/queries/events';
 
 export const dynamic = 'force-dynamic';
 
@@ -138,6 +144,7 @@ function MentionOnlySections({ detail }: { detail: EventDetail }) {
 function AnalyzedSections({ detail }: { detail: EventDetail }) {
   const { event, articles, steps, requirements, impacts } = detail;
   const groups = groupImpacts(impacts);
+  const judged = hasDirectionJudgement(impacts);
   const byType = (type: keyof typeof REQUIREMENT_TYPE_LABELS) =>
     requirements.filter((r) => r.requirement_type === type);
 
@@ -199,27 +206,42 @@ function AnalyzedSections({ detail }: { detail: EventDetail }) {
 
       <Separator />
 
-      {/* 3~4. 긍정 / 부정 */}
-      <section>
-        <SectionTitle index={3} hint={`${groups.positive.length}종목`}>
-          긍정 영향 가능성 종목
-        </SectionTitle>
-        <ImpactTable impacts={groups.positive} />
-      </section>
+      {/* 3~4. 방향을 판정했으면 긍정/부정으로 나누고, 아니면 한 표로 합친다 */}
+      {judged ? (
+        <>
+          <section>
+            <SectionTitle index={3} hint={`${groups.positive.length}종목`}>
+              긍정 영향 가능성 종목
+            </SectionTitle>
+            <ImpactTable impacts={groups.positive} />
+          </section>
 
-      <section>
-        <SectionTitle index={4} hint={`${groups.negative.length}종목`}>
-          부정 영향 가능성 종목
-        </SectionTitle>
-        <ImpactTable impacts={groups.negative} />
-      </section>
+          <section>
+            <SectionTitle index={4} hint={`${groups.negative.length}종목`}>
+              부정 영향 가능성 종목
+            </SectionTitle>
+            <ImpactTable impacts={groups.negative} />
+          </section>
 
-      {groups.other.length > 0 ? (
+          {groups.other.length > 0 ? (
+            <section>
+              <SectionTitle hint={`${groups.other.length}종목`}>방향이 불확실한 종목</SectionTitle>
+              <ImpactTable impacts={groups.other} />
+            </section>
+          ) : null}
+        </>
+      ) : (
         <section>
-          <SectionTitle hint={`${groups.other.length}종목`}>방향이 불확실한 종목</SectionTitle>
+          <SectionTitle index={3} hint={`${groups.other.length}종목`}>
+            영향 범위가 겹치는 종목
+          </SectionTitle>
+          <p className="mb-2 text-xs text-muted">
+            이 이벤트가 건드리는 제품·원재료·산업이 사업 내용과 겹치는 종목입니다. 어느 방향으로
+            얼마나 영향을 받는지는 판정하지 않았습니다.
+          </p>
           <ImpactTable impacts={groups.other} />
         </section>
-      ) : null}
+      )}
 
       {/* 5. 공급망 및 2차 */}
       <section>

@@ -20,7 +20,8 @@ import {
   type ArticleForPrompt,
 } from '@/lib/llm/prompts';
 import { findCandidates, fetchEvidence } from '@/lib/matching/candidates';
-import { buildImpactUser, chunkCandidates, validateImpacts } from '@/lib/matching/impacts';
+import { buildImpactUser, chunkCandidates, deriveImpacts, validateImpacts } from '@/lib/matching/impacts';
+import type { ModelTier } from '@/lib/llm/models';
 import type { EventQuery } from '@/lib/matching/types';
 import { MAX_RETRY, assertTransition } from './state';
 
@@ -40,6 +41,15 @@ type QueuedEvent = {
   retry_count: number;
 };
 
+type AnalyzeConfig = {
+  /** 방향(긍정·부정)까지 LLM 으로 판정할 것인가. false 면 관련 종목만 확정한다. */
+  judgeImpacts: boolean;
+  /** 이벤트 구조화에 쓸 모델 티어. 무료 티어에서는 standard 가 하루 20회라 cheap 이 기본이다. */
+  structureTier: ModelTier;
+  /** MVP 자동 공개 */
+  autoPublish: boolean;
+};
+
 export async function analyzePendingEvents(
   supabase: ServiceClient,
   log: Logger,
@@ -47,7 +57,7 @@ export async function analyzePendingEvents(
 ): Promise<AnalyzeStats> {
   const { data: settings } = await supabase
     .from('app_settings')
-    .select('max_events_per_tick, analyze_enabled')
+    .select('max_events_per_tick, analyze_enabled, judge_impacts, structure_tier, auto_publish')
     .eq('id', 1)
     .maybeSingle();
 
@@ -58,6 +68,14 @@ export async function analyzePendingEvents(
   const limit =
     options.limit ??
     (process.env.NODE_ENV === 'production' ? (settings?.max_events_per_tick ?? 3) : 1);
+
+  const config: AnalyzeConfig = {
+    // 방향 판정은 두 번째 LLM 호출이다. 끄면 이벤트당 호출이 절반이 되고
+    // 무료 티어 하루 처리량이 두 배가 된다. 관련 종목 자체는 그대로 나온다.
+    judgeImpacts: settings?.judge_impacts ?? false,
+    structureTier: (settings?.structure_tier as ModelTier) ?? 'cheap',
+    autoPublish: settings?.auto_publish ?? false,
+  };
 
   const { data: queue, error } = await supabase
     .from('events')
@@ -80,7 +98,7 @@ export async function analyzePendingEvents(
 
   for (const event of (queue ?? []) as QueuedEvent[]) {
     try {
-      const outcome = await analyzeOne(supabase, log, event);
+      const outcome = await analyzeOne(supabase, log, event, config);
       stats.processed++;
       if (outcome.rejected) stats.rejected++;
       else stats.published++;
@@ -116,6 +134,7 @@ async function analyzeOne(
   supabase: ServiceClient,
   log: Logger,
   event: QueuedEvent,
+  config: AnalyzeConfig,
 ): Promise<{ rejected: boolean; impacts: number; droppedUnknownCompany: number }> {
   assertTransition(event.status, 'analyzing');
   await supabase.from('events').update({ status: 'analyzing' }).eq('id', event.id);
@@ -158,7 +177,7 @@ async function analyzeOne(
       schemaName: 'event_structure',
       system: EVENT_STRUCTURE_SYSTEM,
       user: buildEventStructureUser(articles),
-      tier: 'standard',
+      tier: config.structureTier,
       maxOutputTokens: 3000,
     },
   );
@@ -192,14 +211,25 @@ async function analyzeOne(
 
   if (candidates.length === 0) {
     log.warn('후보 종목 없음', { event_id: event.id });
-    await supabase
-      .from('events')
-      .update({ status: 'pending_review', reviewed_at: null, last_error: null })
-      .eq('id', event.id);
+    await finish(supabase, event.id, config, 0);
     return { rejected: false, impacts: 0, droppedUnknownCompany: 0 };
   }
 
-  // ── S6-2. 영향 판정 (LLM, 입력은 후보로 제한) ────────────
+  // ── S6-2a. 방향 판정 없이 확정 (LLM 미사용) ──────────────
+  // 무료 티어 기본 경로다. "무엇과 겹치는가"까지만 말하고 방향은 남기지 않는다.
+  if (!config.judgeImpacts) {
+    const derived = deriveImpacts(candidates, query);
+    await persistImpacts(supabase, event.id, derived.impacts);
+    await finish(supabase, event.id, config, derived.impacts.length);
+    log.info('관련 종목 확정 (방향 판정 없음)', {
+      event_id: event.id,
+      candidates: candidates.length,
+      impacts: derived.impacts.length,
+    });
+    return { rejected: false, impacts: derived.impacts.length, droppedUnknownCompany: 0 };
+  }
+
+  // ── S6-2b. 영향 판정 (LLM, 입력은 후보로 제한) ───────────
   const evidenceIds = candidates.flatMap((c) =>
     c.exposures.map((e) => e.evidenceId).filter((id): id is string => id !== null),
   );
@@ -248,13 +278,36 @@ async function analyzeOne(
     totalImpacts += validated.impacts.length;
   }
 
-  await supabase
-    .from('events')
-    .update({ status: 'pending_review', last_error: null })
-    .eq('id', event.id);
+  await finish(supabase, event.id, config, totalImpacts);
 
   log.info('이벤트 분석 완료', { event_id: event.id, impacts: totalImpacts });
   return { rejected: false, impacts: totalImpacts, droppedUnknownCompany: droppedUnknown };
+}
+
+/**
+ * 분석을 끝낸 이벤트의 상태를 정한다.
+ *
+ * auto_publish 가 켜져 있고 종목이 하나라도 붙었으면 바로 공개한다.
+ * published_requires_ts 제약 때문에 두 타임스탬프를 같이 채워야 한다.
+ */
+async function finish(
+  supabase: ServiceClient,
+  eventId: string,
+  config: AnalyzeConfig,
+  impactCount: number,
+): Promise<void> {
+  const publish = config.autoPublish && impactCount > 0;
+  const now = new Date().toISOString();
+
+  const { error } = await supabase
+    .from('events')
+    .update(
+      publish
+        ? { status: 'published', published_at: now, approved_at: now, reviewed_at: now, last_error: null }
+        : { status: 'pending_review', last_error: null },
+    )
+    .eq('id', eventId);
+  if (error) throw new Error(`이벤트 상태 갱신 실패: ${error.message}`);
 }
 
 /* ── 저장 ─────────────────────────────────────────────── */
