@@ -15,8 +15,8 @@ from ..dart.client import fetch_corp_codes, iter_listed
 
 log = Logger("sync_companies")
 
-# OpenDART corp_cls → market_type
-MARKET_BY_CLS = {"Y": "KOSPI", "K": "KOSDAQ", "N": "KONEX"}
+# market 은 여기서 못 채운다. corpCode.xml 에 corp_cls 가 없어서,
+# 기업별 상세 API 를 호출하는 build_profiles 가 채운다.
 
 
 def main() -> None:

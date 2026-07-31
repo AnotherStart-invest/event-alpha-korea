@@ -17,9 +17,11 @@ const serverSchema = z.object({
 
   OPENDART_API_KEY: z.string().optional(),
 
-  LLM_PROVIDER: z.enum(['anthropic', 'openai']).default('anthropic'),
+  LLM_PROVIDER: z.enum(['anthropic', 'openai', 'gemini']).default('anthropic'),
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
+  // AI Studio 키. 무료 티어라 카드 등록이 필요 없다.
+  GEMINI_API_KEY: z.string().optional(),
 
   CRON_SECRET: z.string().optional(),
   ADMIN_EMAIL: z.string().email().optional(),

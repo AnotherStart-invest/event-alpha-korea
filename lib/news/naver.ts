@@ -4,7 +4,13 @@ import { required } from '@/lib/shared/env';
 import { UpstreamError, withRetry } from '@/lib/shared/errors';
 import { cleanTitle, guessSourceName, parsePubDate, stripHtml, titleHash } from './normalize';
 
-const ENDPOINT = 'https://openapi.naver.com/v1/search/news.json';
+/**
+ * 네이버 검색 API는 개발자센터(openapi.naver.com)에서 NAVER Cloud Platform의
+ * NAVER API HUB로 이관됐다. 엔드포인트와 인증 헤더가 바뀌었고, 응답 스키마는 동일하다.
+ * 인증키는 계정 IAM 액세스 키(`ncp_iam_…`)가 아니라 API HUB 콘솔에서
+ * 애플리케이션별로 발급하는 Client ID / Client Secret 이다.
+ */
+const ENDPOINT = 'https://naverapihub.apigw.ntruss.com/search/v1/news';
 
 /** 네이버 검색 API 응답 (문서화된 필드만) */
 const naverItemSchema = z.object({
@@ -69,8 +75,8 @@ export async function searchNews(
   const payload = await withRetry(async () => {
     const response = await fetch(url, {
       headers: {
-        'X-Naver-Client-Id': clientId,
-        'X-Naver-Client-Secret': clientSecret,
+        'X-NCP-APIGW-API-KEY-ID': clientId,
+        'X-NCP-APIGW-API-KEY': clientSecret,
       },
       cache: 'no-store',
     });

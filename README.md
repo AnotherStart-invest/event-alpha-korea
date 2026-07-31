@@ -40,7 +40,7 @@ AI가 종목을 **지어내지 못하게** 하는 것이 설계의 중심이다.
 | 항목 | 발급처 |
 |---|---|
 | Supabase 프로젝트 | https://supabase.com |
-| 네이버 검색 API | https://developers.naver.com/apps |
+| 네이버 검색 API (NAVER API HUB) | https://www.ncloud.com/product/applicationService/naverApiHub |
 | OpenDART 인증키 | https://opendart.fss.or.kr |
 | Anthropic 또는 OpenAI 키 | 각 콘솔 |
 

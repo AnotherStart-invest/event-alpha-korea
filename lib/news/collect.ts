@@ -8,6 +8,9 @@ import { dedupeBatch, searchNews, type CollectedArticle } from './naver';
  * 한 tick 에서 처리할 키워드 수 상한.
  * Vercel 함수 시간 제한을 넘기지 않기 위한 장치이며, 남은 키워드는
  * last_run_at 라운드로빈으로 다음 tick 이 이어받는다 (ARCHITECTURE §4.1).
+ *
+ * 키워드 1개 = 네이버 API 1회 호출이므로 이 값이 곧 무료 할당량 소모율이다.
+ * cron 주기(.github/workflows/cron.yml)와 곱해서 하루 호출량을 잡는다.
  */
 export const KEYWORDS_PER_TICK = 8;
 

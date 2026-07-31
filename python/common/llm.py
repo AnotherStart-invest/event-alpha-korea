@@ -14,17 +14,39 @@ from .log import Logger
 
 log = Logger("llm")
 
-# 백만 토큰당 USD
+# 백만 토큰당 USD. TS 쪽 lib/llm/models.ts 와 값이 일치해야 한다.
+# Gemini 는 무료 티어로 쓰더라도 **유료 단가**를 적는다. 0 으로 두면 예산 상한이
+# 무력화되고, 나중에 결제를 켜는 순간 안전장치 없이 과금된다.
 PRICING = {
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-sonnet-5": (3.0, 15.0),
     "gpt-5-mini": (0.25, 2.0),
     "gpt-5": (1.25, 10.0),
+    "gemini-3.1-flash-lite": (0.25, 1.5),
+    "gemini-3.5-flash": (1.5, 9.0),
 }
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 1536
 EMBEDDING_PRICE_PER_MTOK = 0.02
+
+# Gemini 임베딩. 출력 차원을 1536 으로 맞춰야 DB(vector(1536)) 와 호환된다.
+GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+
+# Gemini responseJsonSchema 가 받지 않는 키워드. 남기면 400 이 떨어진다.
+_GEMINI_UNSUPPORTED = {
+    "additionalProperties", "$schema", "$ref", "$defs",
+    "minLength", "maxLength", "minimum", "maximum",
+    "minItems", "maxItems", "exclusiveMinimum", "exclusiveMaximum",
+}
+
+
+def _strip_for_gemini(node: Any) -> Any:
+    if isinstance(node, list):
+        return [_strip_for_gemini(item) for item in node]
+    if isinstance(node, dict):
+        return {k: _strip_for_gemini(v) for k, v in node.items() if k not in _GEMINI_UNSUPPORTED}
+    return node
 
 
 @dataclass
@@ -46,7 +68,56 @@ def structured(system: str, user: str, schema: dict, schema_name: str, tier: str
     provider = optional("LLM_PROVIDER", "anthropic")
     if provider == "openai":
         return _openai_structured(system, user, schema, schema_name, tier)
+    if provider == "gemini":
+        return _gemini_structured(system, user, schema, tier)
     return _anthropic_structured(system, user, schema, tier)
+
+
+def _gemini_structured(system: str, user: str, schema: dict, tier: str) -> LlmResult:
+    """Google AI Studio. 무료 티어라 한도를 넘기면 과금이 아니라 429 가 온다."""
+    from google import genai
+    from google.genai import types
+
+    model = "gemini-3.5-flash" if tier == "standard" else "gemini-3.1-flash-lite"
+    client = genai.Client(api_key=require("GEMINI_API_KEY"))
+
+    response = client.models.generate_content(
+        model=model,
+        contents=user,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            response_mime_type="application/json",
+            response_json_schema=_strip_for_gemini(schema),
+            max_output_tokens=8000,
+            # Gemini 3.x 는 기본으로 사고를 켜는데, 사고 토큰이 max_output_tokens 를
+            # 같이 소모해서 본문 JSON 이 잘린다. 사고 토큰은 출력 단가로 과금까지 된다.
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+        ),
+    )
+
+    finish_reason = response.candidates[0].finish_reason if response.candidates else "unknown"
+    text = response.text
+    if not text:
+        # 응답이 비는 대표 원인은 안전필터 차단과 max_output_tokens 초과다.
+        raise RuntimeError(f"Gemini 응답이 비었습니다 (finish_reason={finish_reason}).")
+    # 잘린 응답은 JSON 파싱 오류로 보이지만 원인은 스키마가 아니라 한도다.
+    if str(finish_reason).endswith("MAX_TOKENS"):
+        raise RuntimeError("Gemini 응답이 max_output_tokens 에서 잘렸습니다. 한도를 올리십시오.")
+
+    usage = response.usage_metadata
+    input_tokens = getattr(usage, "prompt_token_count", 0) or 0
+    # 사고 토큰도 출력 단가로 과금된다. 빠뜨리면 비용이 과소집계된다.
+    output_tokens = (getattr(usage, "candidates_token_count", 0) or 0) + (
+        getattr(usage, "thoughts_token_count", 0) or 0
+    )
+    return LlmResult(
+        data=json.loads(text),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=_cost(model, input_tokens, output_tokens),
+        provider="gemini",
+        model=model,
+    )
 
 
 def _anthropic_structured(system: str, user: str, schema: dict, tier: str) -> LlmResult:
@@ -108,9 +179,32 @@ def _openai_structured(system: str, user: str, schema: dict, schema_name: str, t
 
 
 def embed(texts: list[str]) -> list[list[float]]:
-    """임베딩은 항상 OpenAI. Anthropic 이 임베딩 API 를 제공하지 않는다."""
+    """LLM_PROVIDER 가 gemini 면 Gemini, 아니면 OpenAI.
+
+    Anthropic 은 임베딩 API 가 없어서 OpenAI 로 넘긴다.
+    어느 쪽이든 1536 차원이어야 DB(vector(1536)) 와 맞는다.
+    """
     if not texts:
         return []
+
+    if optional("LLM_PROVIDER", "anthropic") == "gemini":
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=require("GEMINI_API_KEY"))
+        response = client.models.embed_content(
+            model=GEMINI_EMBEDDING_MODEL,
+            contents=texts,
+            config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),
+        )
+        vectors = [list(e.values) for e in (response.embeddings or [])]
+        if len(vectors) != len(texts):
+            raise RuntimeError(f"Gemini 임베딩 개수 불일치: 요청 {len(texts)}, 응답 {len(vectors)}")
+        for v in vectors:
+            if len(v) != EMBEDDING_DIMENSIONS:
+                raise RuntimeError(f"Gemini 임베딩 차원 불일치: {len(v)} (기대 {EMBEDDING_DIMENSIONS})")
+        return vectors
+
     from openai import OpenAI
 
     client = OpenAI(api_key=require("OPENAI_API_KEY"))
