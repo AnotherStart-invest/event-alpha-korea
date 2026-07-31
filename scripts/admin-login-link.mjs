@@ -55,6 +55,24 @@ if (!gen.ok) {
   process.exit(1);
 }
 
-const link = JSON.parse(body).action_link;
+const result = JSON.parse(body);
+
+// Supabase 가 준 action_link 를 그대로 쓰면 안 된다.
+//
+// 그 링크는 `/auth/v1/verify` 를 거쳐 토큰을 **URL 해시**(`#access_token=…`)로 돌려주는데,
+// 해시는 브라우저에만 남고 서버로 가지 않는다. `/admin` 은 서버에서 쿠키로 세션을
+// 확인하므로(app/admin/layout.tsx) 해시를 못 보고 로그인 화면으로 되튕긴다.
+// 실제로 "링크를 눌러도 로그인이 안 된다"로 한참 헤맸다.
+//
+// 대신 hashed_token 을 우리 콜백(app/auth/confirm/route.ts)에 넘긴다.
+// Route Handler 는 쿠키를 쓸 수 있으므로 거기서 서버 세션이 확정된다.
+const origin = new URL(redirectTo).origin;
+const next = new URL(redirectTo).pathname || '/admin';
+const link =
+  `${origin}/auth/confirm` +
+  `?token_hash=${encodeURIComponent(result.hashed_token)}` +
+  `&type=${encodeURIComponent(result.verification_type ?? 'magiclink')}` +
+  `&next=${encodeURIComponent(next)}`;
+
 console.log('\n아래 링크를 브라우저에 붙여넣으면 로그인됩니다 (1시간 내 1회용):\n');
 console.log(link);
