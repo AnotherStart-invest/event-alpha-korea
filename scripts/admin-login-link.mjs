@@ -22,7 +22,8 @@ const key = env.SUPABASE_SERVICE_ROLE_KEY;
 if (!email) throw new Error('이메일이 없습니다. ADMIN_EMAIL 을 설정하거나 인자로 넘기세요.');
 
 const H = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
-const redirectTo = 'http://localhost:3200/admin';
+// 인자로 주소를 넘길 수 있다: node scripts/admin-login-link.mjs [이메일] [리다이렉트]
+const redirectTo = process.argv[3] ?? 'https://eventalpha.org/admin';
 
 // 1) 계정이 없으면 만든다. email_confirm=true 라 확인 메일이 나가지 않는다.
 const created = await fetch(`${url}/auth/v1/admin/users`, {
@@ -39,10 +40,14 @@ if (created.ok) {
 }
 
 // 2) 메일 없이 로그인 링크만 발급
+//
+// ⚠️ redirect_to 는 **최상위**여야 한다. options 안에 넣으면 GoTrue 가 조용히 무시하고
+// Site URL 로 되돌린다. 오류도 안 난다. 이걸 "리다이렉트 허용 목록이 잘못됐다"로
+// 오진하기 쉬우니 주의할 것 — 실제로 그렇게 오진했었다.
 const gen = await fetch(`${url}/auth/v1/admin/generate_link`, {
   method: 'POST',
   headers: H,
-  body: JSON.stringify({ type: 'magiclink', email, options: { redirect_to: redirectTo } }),
+  body: JSON.stringify({ type: 'magiclink', email, redirect_to: redirectTo }),
 });
 const body = await gen.text();
 if (!gen.ok) {
