@@ -54,6 +54,44 @@ export const eventStructureSchema = z.object({
 });
 export type EventStructure = z.infer<typeof eventStructureSchema>;
 
+/* ── P5. 전파 경로 → 종목 발굴 ────────────────────────── */
+
+/**
+ * 이벤트가 어떤 유형의 기업에 어떻게 전이되는지를 **단계별로** 받는다.
+ *
+ * P2(eventStructure)와 다른 점은 단계마다 **방향과 관계 유형**이 붙는다는 것이다.
+ * 같은 이벤트라도 단계에 따라 부호가 뒤집힌다 — 철강값 하락은 철강사에 부정적이지만
+ * 철강을 사는 조선·자동차에는 긍정적이다. 용어를 한 바구니에 담으면 이걸 표현할 수 없고,
+ * 그래서 수요 측 종목이 화면에 아예 안 나왔다.
+ *
+ * 여기서도 **기업명을 출력할 수 있는 필드는 없다.** LLM 은 "무엇이 영향받는가"를
+ * 산업·제품 수준으로만 말하고, 실제 종목은 코드가 DB 에서 결정론적으로 찾는다.
+ */
+export const transmissionStepSchema = z.object({
+  /** 이 단계에서 무슨 일이 일어나는가. 한 문장. */
+  step: z.string().min(5).max(200),
+  /** DB 검색어로 쓸 제품·원재료 용어. 일반 명사 형태. */
+  affected_terms: z.array(keyword).min(1).max(6),
+  /** 업종명 후보. KRX 업종 표기에 가깝게. */
+  industry_terms: z.array(keyword).max(4),
+  /** 이 단계에 걸리는 기업들 **입장에서의** 손익 방향 */
+  direction: z.enum(IMPACT_DIRECTIONS),
+  /** 이벤트와 이 기업군의 관계 */
+  relation: z.enum(RELATION_TYPES),
+  /** 왜 그 방향인지. 근거 문장. */
+  reason: z.string().min(5).max(200),
+});
+
+export const transmissionSchema = z.object({
+  /** 경제 논리로 경로를 그릴 수 없으면 false. 그럴듯하게 지어내는 것보다 낫다. */
+  is_traceable: z.boolean(),
+  primary_variable: z.string().max(120),
+  variable_direction: z.enum(VARIABLE_DIRECTIONS),
+  steps: z.array(transmissionStepSchema).max(4),
+});
+export type TransmissionResult = z.infer<typeof transmissionSchema>;
+export type TransmissionStep = z.infer<typeof transmissionStepSchema>;
+
 /** 후보 검색에 쓸 키워드가 하나라도 있는지 (V3 검증) */
 export function hasSearchableKeywords(event: EventStructure): boolean {
   return (

@@ -142,3 +142,51 @@ export function buildPrefilterUser(articles: ArticleForPrompt[]): string {
 export function buildEventStructureUser(articles: ArticleForPrompt[]): string {
   return buildArticlesBlock(articles);
 }
+
+export const TRANSMISSION_SYSTEM = `너는 한국 주식시장 이벤트의 **전파 경로**를 그리는 분석가다.
+
+하나의 사건을 받아, 그 사건이 어떤 유형의 기업에 어떤 방향으로 전이되는지를
+단계별로 쓴다. 각 단계에는 그 단계에서 영향을 받는 제품·산업 용어와,
+**그 기업들 입장에서의 손익 방향**을 붙인다.
+
+절대 규칙
+1. 개별 기업명, 종목명, 종목코드를 어떤 필드에도 쓰지 않는다.
+   실제 종목은 데이터베이스 검색으로 찾는다. 산업, 제품, 원재료 수준으로만 쓴다.
+2. 기사에 없는 사실을 근거로 쓰지 않는다. 추론은 경제 논리로만 전개한다.
+3. 경로가 그려지지 않으면 is_traceable 을 false 로 하고 steps 를 비운다.
+   억지로 단계를 만들지 않는다. 빈 결과가 틀린 결과보다 낫다.
+4. 매수, 매도, 목표주가, 주가 전망을 쓰지 않는다. 손익과 사업 영향만 쓴다.
+
+**단계마다 방향이 뒤집힐 수 있다는 점이 핵심이다.**
+하나의 사건은 어떤 기업군에는 비용이고 다른 기업군에는 기회다. 공급 측만 쓰고
+수요 측을 빠뜨리지 마라. 예시:
+- "중국산 저가 철강 유입" → (1단계) 국내 철강 생산업체: 판매단가 하락, negative
+                          → (2단계) 철강을 원재료로 쓰는 조선·건설·자동차부품: 원가 하락, positive
+- "해상운임 급등" → (1단계) 해운사: 운임 수익 증가, positive
+                 → (2단계) 수출 제조업체: 물류비 증가, negative
+
+필드 작성 지침
+- step: 이 단계에서 무슨 일이 일어나는지 한 문장. "무엇이 → 무엇이 된다" 형태.
+- affected_terms: **데이터베이스 검색어로 쓰인다.** 기업의 "주요제품" 목록에
+  실제로 적혀 있을 법한 일반 명사로 쓴다. 예) "후판", "타이어", "구리", "메모리"
+  너무 넓은 상위어("반도체", "자동차부품")는 수십 개 기업에 걸려 변별력이 없으므로
+  가능한 한 구체적으로 쓴다.
+- industry_terms: KRX 업종 표기에 가까운 형태. 예) "1차 철강 제조업", "고무제품 제조업"
+- direction: 그 기업군 **입장에서의** 손익 방향. 판단이 서지 않으면 uncertain.
+- relation: 사건과 그 기업군의 관계. 사건의 당사자면 direct, 원재료를 대는 쪽이면
+  supplier, 사서 쓰는 쪽이면 customer 에 해당하는 supply_chain, 반사이익이면 competitor.
+- reason: 왜 그 방향인지 한 문장. 손익 항목(매출단가, 원가, 물량)을 명시한다.
+${INJECTION_GUARD}`;
+
+export function buildTransmissionUser(
+  event: { title: string; factualSummary: string | null },
+  articles: ArticleForPrompt[],
+): string {
+  return [
+    '=== 사건 ===',
+    `제목: ${event.title}`,
+    `요약: ${event.factualSummary ?? '(없음 — 아래 기사에서 직접 파악할 것)'}`,
+    '',
+    buildArticlesBlock(articles),
+  ].join('\n');
+}

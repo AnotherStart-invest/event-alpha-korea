@@ -140,6 +140,8 @@ export type EventRow = Timestamps & {
   published_at: string | null;
   reviewed_at: string | null;
   approved_at: string | null;
+  /** 전파 경로 추적을 시도한 시각. 경로를 못 그려도 채운다 (0007) */
+  traced_at: string | null;
 }
 
 export type EventArticleRow = {
@@ -272,6 +274,8 @@ export type AppSettingsRow = {
   structure_tier: 'cheap' | 'standard';
   /** 같은 제품군 상장사를 한 발 더 붙이는 동종 확장 스위치 (0006) */
   peers_enabled: boolean;
+  /** 전파 경로 추적 스위치. 이벤트당 LLM cheap 1회를 쓴다 (0007) */
+  transmission_enabled: boolean;
   updated_at: string;
 }
 

@@ -26,6 +26,19 @@ export class SchemaViolationError extends AppError {
   }
 }
 
+/**
+ * 무료 티어 **하루** 요청 한도 소진 — 재시도해도 소용없음. 파이프라인 정지.
+ *
+ * 같은 429 라도 분당 한도(RPM)는 기다리면 풀리므로 UpstreamError 로 남겨 재시도한다.
+ * 하루 한도는 자정까지 안 풀리는데, 이걸 재시도로 두면 큐에 남은 이벤트마다
+ * 백오프 3회씩 돌면서 retry_count 를 전부 태워버린다(MAX_RETRY 를 넘기면 영구 실패).
+ */
+export class QuotaExceededError extends AppError {
+  constructor(readonly quotaId: string, readonly detail: string) {
+    super(`무료 티어 하루 한도 소진 (${quotaId}): ${detail}`, 'QUOTA_EXCEEDED', false);
+  }
+}
+
 /** 일일 LLM 예산 초과 — 재시도해도 소용없음. 파이프라인 정지 */
 export class BudgetExceededError extends AppError {
   constructor(readonly spentUsd: number, readonly limitUsd: number) {

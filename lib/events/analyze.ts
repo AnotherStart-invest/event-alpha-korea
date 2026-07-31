@@ -1,7 +1,7 @@
 import 'server-only';
 import type { ServiceClient } from '@/lib/db/service';
 import type { Logger } from '@/lib/shared/logger';
-import { BudgetExceededError, errorMessage } from '@/lib/shared/errors';
+import { BudgetExceededError, QuotaExceededError, errorMessage } from '@/lib/shared/errors';
 import { scanObjectForBanned } from '@/lib/shared/banned-words';
 import { callLlm } from '@/lib/llm';
 import {
@@ -105,9 +105,10 @@ export async function analyzePendingEvents(
       stats.impacts += outcome.impacts;
       stats.droppedUnknownCompany += outcome.droppedUnknownCompany;
     } catch (err) {
-      // 예산 초과는 재시도해도 소용없다. 큐를 되돌리고 즉시 중단한다.
-      if (err instanceof BudgetExceededError) {
-        log.warn('예산 초과로 분석 중단', { err: err.message });
+      // 예산 초과와 하루 한도 소진은 재시도해도 소용없다. 큐를 되돌리고 즉시 중단한다.
+      // 계속 돌면 남은 이벤트마다 똑같이 실패하면서 retry_count 만 태운다.
+      if (err instanceof BudgetExceededError || err instanceof QuotaExceededError) {
+        log.warn('한도 초과로 분석 중단', { err: err.message });
         await supabase
           .from('events')
           .update({ status: 'candidate', last_error: err.message })

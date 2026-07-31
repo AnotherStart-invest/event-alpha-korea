@@ -2,7 +2,7 @@ import 'server-only';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { required } from '@/lib/shared/env';
-import { SchemaViolationError, UpstreamError, withRetry } from '@/lib/shared/errors';
+import { QuotaExceededError, SchemaViolationError, UpstreamError, withRetry } from '@/lib/shared/errors';
 import { EMBEDDING_MODELS, MODELS, estimateCostUsd } from './models';
 import type { LlmProvider, LlmResult, StructuredRequest } from './provider';
 
@@ -176,7 +176,27 @@ function toUpstream(err: unknown): unknown {
   if (err && typeof err === 'object' && 'status' in err) {
     const status = Number((err as { status: unknown }).status) || 500;
     const message = err instanceof Error ? err.message : String(err);
+
+    // 하루 한도와 분당 한도는 같은 429 로 오지만 대처가 정반대다.
+    // 분당은 기다리면 풀리고, 하루는 자정까지 안 풀린다.
+    if (status === 429) {
+      const perDay = findPerDayQuota(message);
+      if (perDay) return new QuotaExceededError(perDay, message.slice(0, 300));
+    }
     return new UpstreamError(`Gemini API 오류: ${message}`, status);
   }
   return err;
+}
+
+/**
+ * 429 본문에서 **하루** 한도 위반을 찾는다.
+ *
+ * 실측된 quotaId 예: `GenerateRequestsPerDayPerProjectPerModel-FreeTier`.
+ * 분당 한도는 같은 자리에 `PerMinute` 가 들어오므로 그것과 구분된다.
+ * 문자열 검사인 이유는 SDK 가 에러 본문을 구조화해서 주지 않기 때문이다.
+ */
+function findPerDayQuota(message: string): string | null {
+  const match = message.match(/"?quotaId"?\s*:?\s*"?([A-Za-z0-9-]*PerDay[A-Za-z0-9-]*)"?/);
+  if (match) return match[1];
+  return /PerDay/.test(message) ? 'PerDay' : null;
 }
