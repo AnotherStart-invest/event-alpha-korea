@@ -52,6 +52,8 @@ export type ScoreBreakdown = {
   thematic: number;
   /** 기사 직접 언급 점수. scoreCandidate 는 채우지 않는다 (lib/events/mentions.ts 전용) */
   mention?: number;
+  /** 동종 확장 점수. scoreCandidate 는 채우지 않는다 (lib/events/peers.ts 전용) */
+  peer?: number;
   total: number;
   notes: string[];
 };

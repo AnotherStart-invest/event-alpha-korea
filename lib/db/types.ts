@@ -177,6 +177,11 @@ export type ScoreBreakdown = {
    * 다른 항목과 달리 LLM 분석 없이도 채워지므로 나머지가 전부 0 일 수 있다.
    */
   mention?: number;
+  /**
+   * 이미 붙은 종목과 같은 제품군이라 받은 점수 (lib/events/peers.ts).
+   * 이 값이 있으면 "동종 확장으로 붙은 종목"이고, 다시 씨앗이 되지 않는다.
+   */
+  peer?: number;
   total: number;
   notes: string[];
 }
@@ -265,6 +270,8 @@ export type AppSettingsRow = {
   judge_impacts: boolean;
   /** 이벤트 구조화 모델 티어 (0005) */
   structure_tier: 'cheap' | 'standard';
+  /** 같은 제품군 상장사를 한 발 더 붙이는 동종 확장 스위치 (0006) */
+  peers_enabled: boolean;
   updated_at: string;
 }
 

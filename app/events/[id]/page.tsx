@@ -11,6 +11,7 @@ import {
   groupImpacts,
   hasDirectionJudgement,
   isAnalyzed,
+  isPeerImpact,
   type EventDetail,
 } from '@/lib/queries/events';
 
@@ -95,6 +96,9 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
  */
 function MentionOnlySections({ detail }: { detail: EventDetail }) {
   const { articles, impacts } = detail;
+  // 근거의 성격이 달라 표를 나눈다 — 기사에 이름이 나온 것과 제품군이 겹치는 것.
+  const peers = impacts.filter(isPeerImpact);
+  const mentioned = impacts.filter((impact) => !isPeerImpact(impact));
 
   return (
     <>
@@ -127,15 +131,28 @@ function MentionOnlySections({ detail }: { detail: EventDetail }) {
       </section>
 
       <section>
-        <SectionTitle index={2} hint={`${impacts.length}종목`}>
+        <SectionTitle index={2} hint={`${mentioned.length}종목`}>
           기사에 언급된 상장사
         </SectionTitle>
         <p className="mb-2 text-xs text-muted">
           기사 본문에 이름이 그대로 나온 종목입니다. 사전 대조로만 찾았으며, 영향의 방향이나
           크기는 판정하지 않았습니다.
         </p>
-        <MentionTable impacts={impacts} />
+        <MentionTable impacts={mentioned} />
       </section>
+
+      {peers.length > 0 ? (
+        <section>
+          <SectionTitle index={3} hint={`${peers.length}종목`}>
+            같은 제품군 상장사
+          </SectionTitle>
+          <p className="mb-2 text-xs text-muted">
+            위 종목과 주요제품이 겹쳐 같은 변수의 영향을 받을 수 있는 종목입니다.
+            기사에 직접 언급되지는 않았고, 영향의 방향이나 크기도 판정하지 않았습니다.
+          </p>
+          <MentionTable impacts={peers} kind="peer" />
+        </section>
+      ) : null}
     </>
   );
 }

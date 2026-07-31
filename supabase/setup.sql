@@ -7,7 +7,7 @@
 --
 -- 사용법: Supabase 대시보드 > SQL Editor 에 전체를 붙여넣고 Run.
 -- 재실행해도 안전하다(idempotent).
--- 포함: 0001_init.sql, 0002_rls.sql, 0003_seed.sql, 0004_mvp_free_path.sql, 0005_analyze_tiering.sql
+-- 포함: 0001_init.sql, 0002_rls.sql, 0003_seed.sql, 0004_mvp_free_path.sql, 0005_analyze_tiering.sql, 0006_peer_expansion.sql
 -- ============================================================
 
 -- ┌───────────────────────────────────────────────────────────
@@ -856,3 +856,31 @@ comment on column app_settings.judge_impacts is
   '무료 티어에서는 false 를 권장한다. false 여도 관련 종목은 결정론적으로 붙는다.';
 comment on column app_settings.structure_tier is
   '이벤트 구조화에 쓸 모델 티어. 무료 티어의 standard 는 하루 20회 상한이라 cheap 이 기본.';
+
+
+-- ┌───────────────────────────────────────────────────────────
+-- │ 0006_peer_expansion.sql
+-- └───────────────────────────────────────────────────────────
+
+-- Event Alpha Korea — 0006. 동종 확장 스위치
+--
+-- 배경: 기사 직접 언급(mentions)만으로는 이벤트당 1~3종목이 한계였다.
+-- 기사가 이름을 말한 종목만 잡히기 때문이다. 하지만 타이어 해상운임이 오르면
+-- 기사에 안 나온 한국타이어도 같은 변수를 맞는다.
+--
+-- lib/events/peers.ts 가 이미 붙은 종목과 같은 주요제품을 파는 상장사를
+-- 한 발 더 붙인다. LLM 을 부르지 않으므로 예산·한도와 무관하다.
+--
+-- 과잉 확장은 두 상한으로 막는다.
+--   - 제품 용어 하나가 15개 넘는 기업을 끌고 오면 그 용어는 버린다
+--     ("자동차부품" 44개, "반도체" 26개는 변별력이 없다)
+--   - 이벤트당 동종 확장 종목은 12개까지
+--
+-- 재실행해도 안전하다.
+
+alter table app_settings
+  add column if not exists peers_enabled boolean not null default true;
+
+comment on column app_settings.peers_enabled is
+  'true 면 이벤트에 붙은 종목과 같은 제품군인 상장사를 추가로 붙인다(lib/events/peers.ts). '
+  'LLM 을 쓰지 않는다. 관련 종목이 너무 많이 뜬다고 판단되면 이걸 끈다.';

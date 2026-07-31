@@ -64,6 +64,17 @@ export function hasDirectionJudgement(impacts: ImpactWithCompany[]): boolean {
   return impacts.some((impact) => impact.impact_direction !== 'uncertain');
 }
 
+/**
+ * 동종 확장(lib/events/peers.ts)으로 붙은 종목인가.
+ *
+ * 기사에 이름이 나온 종목과 근거의 성격이 다르다 — 이쪽은 "같은 제품을 판다"가
+ * 전부다. 한 표에 섞으면 "기사에 언급된 상장사"라는 표 제목이 거짓말이 되므로
+ * 화면에서 갈라 놓는다.
+ */
+export function isPeerImpact(impact: ImpactWithCompany): boolean {
+  return typeof (impact.score_breakdown as ScoreBreakdown)?.peer === 'number';
+}
+
 export type ImpactWithCompany = Pick<
   EventImpactRow,
   | 'id'

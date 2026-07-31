@@ -19,7 +19,7 @@ import { errorMessage } from '@/lib/shared/errors';
  * 실패해도 5xx 를 던지지 않는 것이 이 래퍼의 계약이다.
  */
 
-export type JobName = 'collect' | 'cluster' | 'analyze' | 'mentions';
+export type JobName = 'collect' | 'cluster' | 'analyze' | 'mentions' | 'peers';
 
 /** 이 시간이 지난 미완료 실행은 죽은 것으로 보고 회수한다. */
 export const STALE_RUN_MINUTES = 10;

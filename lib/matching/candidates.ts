@@ -15,6 +15,37 @@ import type { Candidate, EventQuery, MatchKind, MatchedExposure } from './types'
 export const MAX_CANDIDATES = 100;
 const EMBEDDING_THRESHOLD = 0.72;
 
+/**
+ * 키워드 하나가 끌고 올 수 있는 기업 수 상한. 이보다 많으면 변별력이 없다고 보고 버린다.
+ *
+ * 실측 근거: "타이어" 3개 / "철강" 14개는 남아야 하고 "반도체" 72개는 버려야 한다.
+ * 광범위한 산업명 하나가 소부장 수십 개를 통째로 끌고 오면 점수가 20~35에 뭉쳐
+ * 순위가 무의미해지고, 화면은 "관련 없는 종목 목록"이 된다.
+ *
+ * **기업이 아니라 키워드를 버린다.** 같은 기업이 더 좁은 키워드로도 걸렸다면
+ * 그 근거로는 그대로 남는다 (예: "반도체"는 버려도 "메모리 반도체"는 살아남는다).
+ */
+export const MAX_COMPANIES_PER_TERM = 15;
+
+/** 매칭 기업이 너무 많아 변별력이 없는 키워드를 골라낸다. */
+export function findBroadTerms(
+  hits: Iterable<{ companyId: string; keyword: string }>,
+  max = MAX_COMPANIES_PER_TERM,
+): Set<string> {
+  const byKeyword = new Map<string, Set<string>>();
+  for (const hit of hits) {
+    let companies = byKeyword.get(hit.keyword);
+    if (!companies) byKeyword.set(hit.keyword, (companies = new Set()));
+    companies.add(hit.companyId);
+  }
+
+  const broad = new Set<string>();
+  for (const [keyword, companies] of byKeyword) {
+    if (companies.size > max) broad.add(keyword);
+  }
+  return broad;
+}
+
 type ExposureRow = {
   id: string;
   company_id: string;
@@ -111,6 +142,19 @@ export async function findCandidates(
   }
 
   if (hits.size === 0) return [];
+
+  // 변별력 없는 광범위 키워드를 버린다. 종목이 아니라 키워드 단위로 버리므로
+  // 더 좁은 키워드로도 걸린 기업은 그대로 남는다.
+  const broadTerms = findBroadTerms(
+    Array.from(hits.values(), (h) => ({ companyId: h.row.company_id, keyword: h.keyword })),
+  );
+  if (broadTerms.size > 0) {
+    for (const [id, hit] of hits) {
+      if (broadTerms.has(hit.keyword)) hits.delete(id);
+    }
+    log.info('광범위 키워드 제외', { terms: Array.from(broadTerms).join(', '), remaining: hits.size });
+    if (hits.size === 0) return [];
+  }
 
   const companyIds = Array.from(new Set(Array.from(hits.values()).map((h) => h.row.company_id)));
   const [companies, evidence] = await Promise.all([

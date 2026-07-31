@@ -4,20 +4,34 @@ import { formatDate } from '@/lib/shared/format';
 import type { ImpactWithCompany } from '@/lib/queries/events';
 
 /**
- * 기사에 이름이 나온 종목만 보여주는 표.
+ * 근거가 한 줄뿐인 종목을 보여주는 표.
  *
  * ImpactTable 과 달리 관련도 점수·영향 강도·관계 유형을 쓰지 않는다.
  * 그 값들은 LLM 분석이 있어야 의미가 생기는데, 여기서는 근거가
- * "기사에 이름이 나왔다" 하나뿐이라 칸을 채우면 오히려 과장이 된다.
+ * "기사에 이름이 나왔다"(mention) 또는 "같은 제품을 판다"(peer)
+ * 하나뿐이라 칸을 채우면 오히려 과장이 된다.
+ *
+ * 두 근거를 한 표에 섞지 않는다. 성격이 달라서 같은 칸에 넣으면
+ * 어느 쪽이 어느 근거인지 읽는 사람이 구분할 수 없다.
  */
-export function MentionTable({ impacts }: { impacts: ImpactWithCompany[] }) {
+export function MentionTable({
+  impacts,
+  kind = 'mention',
+}: {
+  impacts: ImpactWithCompany[];
+  kind?: 'mention' | 'peer';
+}) {
   if (impacts.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted">
-        기사에서 상장사 이름을 찾지 못했습니다.
+        {kind === 'peer'
+          ? '같은 제품군의 다른 상장사를 찾지 못했습니다.'
+          : '기사에서 상장사 이름을 찾지 못했습니다.'}
       </p>
     );
   }
+
+  const reasonHeader = kind === 'peer' ? '겹치는 제품' : '언급된 대목';
 
   return (
     <>
@@ -30,7 +44,7 @@ export function MentionTable({ impacts }: { impacts: ImpactWithCompany[] }) {
               <Th>코드</Th>
               <Th>시장</Th>
               <Th>업종</Th>
-              <Th>언급된 대목</Th>
+              <Th>{reasonHeader}</Th>
             </tr>
           </thead>
           <tbody>
@@ -45,7 +59,7 @@ export function MentionTable({ impacts }: { impacts: ImpactWithCompany[] }) {
                   {impact.company?.industry_name ?? '—'}
                 </Td>
                 <Td className="max-w-lg">
-                  <Excerpt impact={impact} />
+                  <Reason impact={impact} kind={kind} />
                 </Td>
               </tr>
             ))}
@@ -67,7 +81,7 @@ export function MentionTable({ impacts }: { impacts: ImpactWithCompany[] }) {
               <p className="mt-0.5 text-xs text-muted">{impact.company.industry_name}</p>
             ) : null}
             <div className="mt-2">
-              <Excerpt impact={impact} />
+              <Reason impact={impact} kind={kind} />
             </div>
           </li>
         ))}
@@ -85,7 +99,16 @@ function CompanyLink({ impact }: { impact: ImpactWithCompany }) {
   );
 }
 
-function Excerpt({ impact }: { impact: ImpactWithCompany }) {
+function Reason({ impact, kind }: { impact: ImpactWithCompany; kind: 'mention' | 'peer' }) {
+  // 동종 확장은 기사 근거가 없다. 근거는 "무슨 제품이 겹치는가"이고
+  // 그건 score_breakdown 의 notes 에 그대로 적혀 있다.
+  if (kind === 'peer') {
+    const note = impact.score_breakdown?.notes?.[0];
+    return (
+      <p className="text-xs leading-relaxed text-muted-strong">{note ?? '같은 제품군'}</p>
+    );
+  }
+
   const evidence = impact.evidence[0];
   if (!evidence) return <span className="text-[11px] text-muted">근거 없음</span>;
 
