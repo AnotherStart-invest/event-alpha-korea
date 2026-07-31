@@ -92,4 +92,15 @@ describe('TRANSMISSION_SYSTEM', () => {
     expect(TRANSMISSION_SYSTEM).toContain('기업명');
     expect(TRANSMISSION_SYSTEM).toContain('수요 측');
   });
+
+  /**
+   * 실측 사고 재발 방지. affected_terms 는 KRX 주요제품(= 파는 것)과 대조되는데
+   * 수요 측 단계에 원재료 이름을 적으면 그 원재료를 만들어 파는 기업이 잡힌다.
+   * 배터리 이벤트에서 에코프로비엠(양극활물질)은 positive, 신성에스티(배터리
+   * 부품)는 negative 로 붙어 같은 역할의 기업에 반대 방향이 매겨졌다.
+   */
+  it('"파는 것을 쓰라"는 지시가 프롬프트에 남아 있다 — 방향이 뒤집히는 사고의 원인이었다', () => {
+    expect(TRANSMISSION_SYSTEM).toContain('파는 것');
+    expect(TRANSMISSION_SYSTEM).toContain('사는 것을 쓰지 않는다');
+  });
 });

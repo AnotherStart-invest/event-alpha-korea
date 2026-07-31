@@ -70,7 +70,15 @@ export type EventStructure = z.infer<typeof eventStructureSchema>;
 export const transmissionStepSchema = z.object({
   /** 이 단계에서 무슨 일이 일어나는가. 한 문장. */
   step: z.string().min(5).max(200),
-  /** DB 검색어로 쓸 제품·원재료 용어. 일반 명사 형태. */
+  /**
+   * DB 검색어로 쓸 제품 용어. 일반 명사 형태.
+   *
+   * **이 단계에 걸리는 기업이 "파는" 것이어야 한다.** 검색은 KRX 주요제품과
+   * 대조되므로, 그들이 사서 쓰는 원재료를 적으면 그 원재료를 만들어 파는
+   * (방향이 정반대인) 기업이 잡힌다. 실측 사고: "배터리 원가 부담" 단계에
+   * "배터리"를 적어 배터리 소재사가 negative 로 붙었다 — 같은 이벤트의
+   * 다른 단계에서는 같은 회사들이 positive 였다.
+   */
   affected_terms: z.array(keyword).min(1).max(6),
   /** 업종명 후보. KRX 업종 표기에 가깝게. */
   industry_terms: z.array(keyword).max(4),
