@@ -70,13 +70,12 @@ openssl rand -hex 32
 
 ### 3. 데이터베이스
 
-Supabase SQL Editor에서 순서대로 실행한다.
-
-1. `supabase/migrations/0001_init.sql`
-2. `supabase/migrations/0002_rls.sql`
-3. `supabase/migrations/0003_seed.sql`
+Supabase SQL Editor에서 `supabase/setup.sql` 을 통째로 붙여넣고 Run 한다.
+`supabase/migrations/*.sql` 을 번호순으로 하나씩 실행해도 결과는 같다.
 
 전부 재실행 가능하다(idempotent).
+
+> 원본을 고쳤으면 `npm run db:sql` 로 `setup.sql` 을 다시 만든다.
 
 Supabase CLI를 쓴다면:
 
@@ -98,8 +97,20 @@ python -m python.scripts.build_profiles --limit 50
 python -m python.scripts.backfill_embeddings
 ```
 
+시가총액을 채운다. 네이버 금융에서 KOSPI·KOSDAQ 전 종목을 훑는다(약 3,900건, LLM 비용 없음):
+
+```bash
+python -m python.scripts.sync_market_cap
+```
+
+> ⚠️ **`sync_market_cap` 은 pg_cron 이 못 돌린다.** Supabase pg_cron 은 HTTP 엔드포인트만
+> 호출하는데 이건 파이썬 배치다. 장 마감 후 하루 한 번 로컬이나 GitHub Actions 에서 돌린다.
+> 화면의 실시간 시세는 이것과 무관하다 — `/api/quotes` 가 조회 때마다 네이버에서 바로 받는다.
+
 > `build_profiles` 는 LLM 비용이 발생한다. `--dry-run` 으로 먼저 확인할 것.
 > **기업 프로필이 없으면 관련 종목을 하나도 찾지 못한다.** 이것이 제품 품질의 상한이다.
+> 시가총액은 종목 배열의 마지막 정렬 기준이라 없어도 화면은 뜨지만, 있으면 동점 종목의
+> 순서가 안정된다.
 
 ### 5. 개발 서버
 
@@ -261,6 +272,7 @@ docs/           설계 문서 6종
 
 - 기업 프로필에 없는 관계는 절대 못 찾는다 — 커버리지가 곧 상한
 - 사업보고서는 연 1회 갱신이라 최근 변화 반영이 늦다
-- 시세를 쓰지 않으므로 "이미 주가에 반영됐는지"는 판단 불가
+- 현재가·등락률은 보여주지만 **"이미 주가에 반영됐는지"는 판단하지 않는다** — 그 판정은
+  기준일·지수·거래량을 어떻게 잡느냐에 따라 뒤집혀서, 근거 없이 내놓으면 오히려 오도한다
 - 한국어 형태소 분석기가 없어 동의어 사전 품질에 매칭이 좌우된다
 - MVP는 외부 공개 없이 본인 사용으로 한정

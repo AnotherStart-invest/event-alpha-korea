@@ -121,6 +121,13 @@ def main() -> None:
     deduped = {(e["company_id"], e["exposure_type"], e["normalized_value"]): e for e in exposures}
     payload = list(deduped.values())
 
+    # 옛 항목을 먼저 지운다. **upsert 만 하면 파싱 규칙을 고쳐도 옛 결과가 남는다.**
+    # 실측: split_products 가 "기타 전자부품 제조업" 을 "전자부품" 으로 바꾸도록 고쳐도
+    # 옛 행이 그대로 살아 있어 LG이노텍이 계속 업종명으로 매칭됐다.
+    # KRX 유래 행만 지운다 — 사업보고서(build_profiles)로 만든 것은 근거가 달라 건드리지 않는다.
+    removed = _clear_krx_products(supabase, list(evidence_ids.values()))
+    log.info("옛 주요제품 삭제", removed=removed)
+
     for batch in chunked(payload, BATCH):
         supabase.table("company_exposures").upsert(
             batch, on_conflict="company_id,exposure_type,normalized_value"
@@ -128,6 +135,28 @@ def main() -> None:
     log.info("주요제품 적재", exposures=len(payload))
 
     _report(len(rows), delisted, len(evidence_ids), len(payload))
+
+
+def _clear_krx_products(supabase, evidence_ids: list[str]) -> int:
+    """KRX 주요제품에서 만든 product 노출을 지운다.
+
+    근거(source_evidence_id)로 식별한다 — 이 값이 KRX 목록 evidence 를 가리키면
+    이 스크립트가 만든 행이다. 사업보고서 유래 노출은 다른 evidence 를 갖고 있어
+    걸리지 않는다.
+
+    URL 길이 제한이 있어 id 를 나눠 보낸다.
+    """
+    removed = 0
+    for batch in chunked([e for e in evidence_ids if e], 100):
+        result = (
+            supabase.table("company_exposures")
+            .delete()
+            .eq("exposure_type", "product")
+            .in_("source_evidence_id", batch)
+            .execute()
+        )
+        removed += len(result.data or [])
+    return removed
 
 
 def _load_company_ids(supabase) -> dict[str, str]:

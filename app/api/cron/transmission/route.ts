@@ -14,17 +14,28 @@ export const maxDuration = 60;
  */
 function handle(request: Request) {
   return cronResponse(request, async () => {
-    const limitParam = new URL(request.url).searchParams.get('limit');
+    const params = new URL(request.url).searchParams;
+    const limitParam = params.get('limit');
     const limit = limitParam ? Number(limitParam) : undefined;
+
+    // 특정 이벤트만 다시 추적한다. 점수 체계를 고친 뒤 결과를 확인할 때 쓴다 —
+    // 이게 없으면 "가장 최근 미추적 이벤트"만 잡혀서 원하는 이벤트를 겨냥할 수 없다.
+    const eventIds = (params.get('eventIds') ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => UUID.test(id));
 
     const supabase = createServiceClient();
     return runJob(supabase, 'transmission', ({ log }) =>
       traceTransmission(supabase, log, {
         limit: Number.isFinite(limit) ? limit : undefined,
+        eventIds: eventIds.length > 0 ? eventIds : undefined,
       }),
     );
   });
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const GET = handle;
 export const POST = handle;

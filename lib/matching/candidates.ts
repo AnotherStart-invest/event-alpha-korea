@@ -156,6 +156,16 @@ export async function findCandidates(
     if (hits.size === 0) return [];
   }
 
+  // 키워드별 매칭 기업 수 = 그 용어의 변별력. findBroadTerms 가 쓰는 것과 같은 집계지만,
+  // 저쪽은 15개 초과를 통째로 버리는 계단이고 이쪽은 점수에 연속으로 반영된다.
+  // 계단만 있으면 14개사짜리 "항생제" 가 1개사짜리 "폐배터리 리사이클" 과 동점이 된다.
+  const companiesPerTerm = new Map<string, Set<string>>();
+  for (const hit of hits.values()) {
+    let companies = companiesPerTerm.get(hit.keyword);
+    if (!companies) companiesPerTerm.set(hit.keyword, (companies = new Set()));
+    companies.add(hit.row.company_id);
+  }
+
   const companyIds = Array.from(new Set(Array.from(hits.values()).map((h) => h.row.company_id)));
   const [companies, evidence] = await Promise.all([
     fetchCompanies(supabase, companyIds),
@@ -181,6 +191,7 @@ export async function findCandidates(
         market: company.market,
         industryName: company.industry_name,
         latestReportDate: company.latest_report_date,
+        productExposureCount: company.product_exposure_count ?? 0,
         exposures: [],
       });
     }
@@ -201,6 +212,7 @@ export async function findCandidates(
       matchKind: hit.kind,
       similarity: hit.similarity,
       matchedKeyword: hit.keyword,
+      termCompanyCount: companiesPerTerm.get(hit.keyword)?.size ?? 1,
     });
   }
 
@@ -256,13 +268,16 @@ async function fetchCompanies(supabase: ServiceClient, ids: string[]) {
       market: string | null;
       industry_name: string | null;
       latest_report_date: string | null;
+      product_exposure_count: number | null;
     }
   >();
   if (ids.length === 0) return map;
 
   const { data, error } = await supabase
     .from('companies')
-    .select('id, company_name, stock_code, market, industry_name, latest_report_date')
+    .select(
+      'id, company_name, stock_code, market, industry_name, latest_report_date, product_exposure_count',
+    )
     .in('id', ids);
   if (error) throw new Error(`기업 조회 실패: ${error.message}`);
 

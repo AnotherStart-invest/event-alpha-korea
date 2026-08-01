@@ -14,9 +14,11 @@ import { cn } from '@/lib/shared/cn';
 const ROWS: Array<{ key: keyof typeof MAX_SCORES; label: string }> = [
   { key: 'product', label: '직접 제품 관련성' },
   { key: 'revenue', label: '실제 매출·수주 근거' },
+  { key: 'focus', label: '사업 집중도' },
   { key: 'geography', label: '지역 노출' },
   { key: 'supplyChain', label: '고객·공급망' },
   { key: 'disclosure', label: '공식 공시 근거' },
+  { key: 'industry', label: '업종 적합' },
   { key: 'recency', label: '최근성' },
   { key: 'thematic', label: '단순 테마' },
 ];
@@ -66,8 +68,9 @@ export function ScoreCell({
                 {ROWS.map((row) => (
                   <tr key={row.key}>
                     <td className="py-0.5 text-muted">{row.label}</td>
+                    {/* focus·industry 는 0009 이전에 채점된 행에 없다. 0 으로 읽는다. */}
                     <td className="tnum py-0.5 text-right">
-                      {detail[row.key]}
+                      {detail[row.key] ?? 0}
                       <span className="text-muted"> / {MAX_SCORES[row.key]}</span>
                     </td>
                   </tr>

@@ -85,6 +85,7 @@ export type ImpactWithCompany = Pick<
   | 'confidence_score'
   | 'rationale'
   | 'transmission_path'
+  | 'step_order'
   | 'missing_evidence'
 > & {
   score_breakdown: ScoreBreakdown | Record<string, never>;
@@ -95,6 +96,10 @@ export type ImpactWithCompany = Pick<
     market: string | null;
     industry_name: string | null;
     latest_report_date: string | null;
+    market_cap: number | null;
+    price_updated_at: string | null;
+    /** 이 기업이 파는 제품 가짓수. 적을수록 매칭 하나의 무게가 크다 (0009) */
+    product_exposure_count: number;
   } | null;
   evidence: Array<{
     id: string;
@@ -206,8 +211,9 @@ async function loadDetail(
       .from('event_impacts')
       .select(
         `id, impact_direction, impact_level, relation_type, relevance_score, confidence_score,
-         rationale, transmission_path, missing_evidence, score_breakdown,
-         company:companies(id, company_name, stock_code, market, industry_name, latest_report_date),
+         rationale, transmission_path, step_order, missing_evidence, score_breakdown,
+         company:companies(id, company_name, stock_code, market, industry_name, latest_report_date,
+                           market_cap, price_updated_at, product_exposure_count),
          event_impact_evidence(evidence:evidence_sources(id, source_type, source_title, source_url, source_date, excerpt))`,
       )
       .eq('event_id', event.id)
@@ -247,6 +253,157 @@ async function loadDetail(
     steps: (stepsResult.data ?? []) as EventTransmissionStepRow[],
     requirements: (requirementsResult.data ?? []) as EventRequirementRow[],
     impacts,
+  };
+}
+
+/* ── 밸류체인 ─────────────────────────────────────────── */
+
+/**
+ * 한 단계에 보여줄 종목 수. 한 이벤트 전체로는 최대 STEP × 3 이다.
+ *
+ * 나열이 아니라 선별이 목적이다. 이 시스템의 매칭은 "관련 있어 보이는 것"을 넓게
+ * 긁어오도록 돼 있어서, 상한이 없으면 화면이 20종목짜리 명단이 되고 그 순간
+ * 투자자가 읽을 이유가 사라진다. 못 보여준 종목은 접어서 세어만 준다.
+ */
+export const VISIBLE_PER_STEP = 3;
+
+/**
+ * 이 점수 미만은 아예 후보에서 뺀다.
+ *
+ * **40 → 30 으로 내렸다.** 용어 변별력 가중치가 들어오면서 점수 분포가 통째로
+ * 내려갔기 때문이다. 실측: "리튬"(1개사) 정확 일치로 걸린 성일하이텍이 36점,
+ * "반도체 설계" 로 걸린 세미파이브가 49점 — 옛 컷(40)이면 성일하이텍처럼 정확한
+ * 매칭이 잘려 밸류체인 전체가 빈 화면이 됐다.
+ *
+ * 이제 잡스러운 종목은 이 컷이 아니라 **매칭 단계에서** 걸러진다
+ * (scoring.ts 의 R6 + 변별력 가중치). 컷은 남은 것 중 가장 약한 것만 떨어뜨린다.
+ * 새 기준: 구체적 용어 하나(20) 또는 어중간한 용어 + 실제 사업 집중도(10+10).
+ */
+export const DISPLAY_SCORE_FLOOR = 30;
+
+/**
+ * 0009 의 새 점수 체계로 채점된 행인가.
+ *
+ * focus 는 0009 에서 생겼으므로, 이 값이 아예 없으면 옛 체계로 매긴 점수다.
+ * 옛 점수는 최대가 35점이라 40점 컷을 그대로 들이대면 화면이 전부 빈다.
+ * 그래서 컷은 새로 채점된 행에만 적용하고, 옛 행은 순위로만 거른다.
+ * 전체를 재추적하고 나면 이 분기는 자연히 죽는다.
+ */
+function isRescored(impact: ImpactWithCompany): boolean {
+  return typeof (impact.score_breakdown as ScoreBreakdown)?.focus === 'number';
+}
+
+/**
+ * 표시 순위.
+ *
+ * 1순위 관련도 — 사용자가 고른 정책이다. 집중도·업종이 들어오면서 관련도가
+ *   비로소 종목을 변별하게 됐다.
+ * 2순위 집중도 점수 — 관련도가 같으면 사업이 더 집중된 쪽이 먼저다.
+ * 3순위 제품 가짓수 — **옛 행을 구제하는 축이다.** 재채점 전에는 1·2순위가
+ *   전부 동점이라(35점 무리) 순서를 못 정하는데, companies.product_exposure_count
+ *   는 마이그레이션이 전 종목에 채워 두므로 LLM 없이 지금 당장 쓸 수 있다.
+ *   실측: 라온시큐어 1개 · 세미파이브 1개 · 비상교육 2개 … SK 8개 · 사조산업 12개.
+ *   적은 쪽이 먼저다 — 그것만 파는 회사에게 이 사건이 곧 실적이다.
+ * 4순위 시가총액 — 위가 모두 같을 때. 같은 근거라면 큰 회사가 먼저 눈에 든다.
+ * 5순위 이름 — 정렬을 안정시킨다. 없으면 순서가 실행마다 달라져 화면이 흔들린다.
+ */
+export function compareForDisplay(a: ImpactWithCompany, b: ImpactWithCompany): number {
+  return byRelevance(a, b);
+}
+
+/**
+ * 밸류체인이 없는 이벤트(전파 경로를 못 그렸거나 분석 경로로만 종목이 붙은 경우)의
+ * 표에 실을 종목 수.
+ *
+ * 단계별 레인보다 조금 넉넉하다 — 여기는 단계 구분이 없어 표가 하나뿐이라서
+ * 3개만 실으면 정보가 지나치게 깎인다.
+ */
+export const VISIBLE_PER_GROUP = 6;
+
+function byRelevance(a: ImpactWithCompany, b: ImpactWithCompany): number {
+  if (a.relevance_score !== b.relevance_score) return b.relevance_score - a.relevance_score;
+
+  const focusA = (a.score_breakdown as ScoreBreakdown)?.focus ?? 0;
+  const focusB = (b.score_breakdown as ScoreBreakdown)?.focus ?? 0;
+  if (focusA !== focusB) return focusB - focusA;
+
+  // 가짓수를 모르는 기업(0)은 뒤로 보낸다. 0 을 "가장 집중됨" 으로 읽으면
+  // 데이터가 없는 기업이 1등이 되는 역전이 생긴다.
+  const countA = a.company?.product_exposure_count || Number.MAX_SAFE_INTEGER;
+  const countB = b.company?.product_exposure_count || Number.MAX_SAFE_INTEGER;
+  if (countA !== countB) return countA - countB;
+
+  const capA = a.company?.market_cap ?? -1;
+  const capB = b.company?.market_cap ?? -1;
+  if (capA !== capB) return capB - capA;
+
+  return (a.company?.company_name ?? '').localeCompare(b.company?.company_name ?? '', 'ko');
+}
+
+/**
+ * 코넥스는 사실상 거래가 안 된다. 점수가 아무리 높아도 투자 후보가 아니므로
+ * 아예 후보에서 뺀다.
+ */
+function isTradable(impact: ImpactWithCompany): boolean {
+  return impact.company?.market !== 'KONEX';
+}
+
+/** 관련도 컷 → 관련도 순 → 상위 N개. 나머지는 세기만 한다. */
+function rankForDisplay(impacts: ImpactWithCompany[], limit = VISIBLE_PER_STEP) {
+  const eligible = impacts
+    .filter(
+      (i) => isTradable(i) && (!isRescored(i) || i.relevance_score >= DISPLAY_SCORE_FLOOR),
+    )
+    .sort(byRelevance);
+
+  return {
+    shown: eligible.slice(0, limit),
+    /** 컷 아래이거나 상한에 밀려 화면에 못 올라간 종목 수 */
+    hiddenCount: impacts.length - Math.min(eligible.length, limit),
+  };
+}
+
+export type ChainLane = {
+  step: EventTransmissionStepRow;
+  /** 이 단계에서 보여줄 종목. 관련도 순, 최대 VISIBLE_PER_STEP 개. */
+  shown: ImpactWithCompany[];
+  /** 컷에 걸렸거나 상한에 밀린 종목 수 */
+  hiddenCount: number;
+};
+
+export type ValueChain = {
+  lanes: ChainLane[];
+  /** 어느 단계에도 붙지 않은 종목 (기사 직접 언급·동종 확장으로 붙은 것) */
+  unassigned: { shown: ImpactWithCompany[]; hiddenCount: number };
+  /** 레인에 실제로 종목이 하나라도 있는가. 없으면 밸류체인 화면을 그릴 이유가 없다. */
+  hasChain: boolean;
+};
+
+/**
+ * 전파 단계를 축으로 종목을 배열한다.
+ *
+ * 이 함수가 생기기 전에는 505개나 쌓인 단계 정보를 화면이 통째로 버리고 있었다.
+ * 종목이 몇 단계에서 걸렸는지는 transmission.ts 가 알고 있었지만 rationale
+ * 문자열에만 남아 있어 읽을 수가 없었다(0009 에서 step_order 로 승격).
+ */
+export function buildValueChain(
+  steps: EventTransmissionStepRow[],
+  impacts: ImpactWithCompany[],
+): ValueChain {
+  const ordered = [...steps].sort((a, b) => a.step_order - b.step_order);
+
+  const lanes: ChainLane[] = ordered.map((step) => {
+    const mine = impacts.filter((i) => i.step_order === step.step_order);
+    return { step, ...rankForDisplay(mine) };
+  });
+
+  const assigned = new Set(ordered.map((s) => s.step_order));
+  const rest = impacts.filter((i) => i.step_order === null || !assigned.has(i.step_order));
+
+  return {
+    lanes,
+    unassigned: rankForDisplay(rest),
+    hasChain: lanes.some((lane) => lane.shown.length > 0),
   };
 }
 

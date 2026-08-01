@@ -34,6 +34,8 @@ function exposure(overrides: Partial<MatchedExposure> = {}): MatchedExposure {
     matchKind: 'exact',
     similarity: null,
     matchedKeyword: '변압기',
+    // 기본값은 "이 용어를 가진 회사가 하나뿐" — 종목을 정확히 특정하는 매칭이다.
+    termCompanyCount: 1,
     ...overrides,
   };
 }
@@ -46,6 +48,7 @@ function candidate(overrides: Partial<Candidate> = {}): Candidate {
     market: 'KOSPI',
     industryName: '전기장비',
     latestReportDate: '2026-03-15',
+    productExposureCount: 1,
     exposures: [exposure()],
     ...overrides,
   };

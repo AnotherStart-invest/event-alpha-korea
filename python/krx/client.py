@@ -93,22 +93,53 @@ def _clean(cell: str) -> str:
 # ── 주요제품 → 검색 가능한 항목 ────────────────────────────────
 
 # 조각 끝에 붙는 상용어. 제거해야 "스테인리스 제조" 가 "스테인리스" 와 매칭된다.
+#
+# **산업분류 접미어(…제조업)가 특히 중요하다.** 이게 없을 때 "기타 전자부품 제조업" 이
+# 통째로 한 항목이 됐고, 그 표기를 쓰는 회사가 하나뿐이라 "변별력 만점" 을 받아
+# LG이노텍이 핵심광물 뉴스에 1등으로 올라왔다. 제품이 아니라 업종명인데도.
+# 접미어를 벗기면 "전자부품"(10개사)이 되어 변별력 가중치가 제대로 깎는다.
+#
+# 순서가 중요하다 — 긴 것을 먼저 둬야 "제조업" 이 "제조" 로 잘못 잘리지 않는다.
 _TRAILING = (
     "제조 판매",
     "제조판매",
     "생산 판매",
+    "제조업",
+    "가공업",
+    "처리업",
+    "도매업",
+    "소매업",
+    "판매업",
+    "공급업",
+    "유통업",
+    "운영업",
+    "관리업",
+    "중개업",
+    "알선업",
+    "대행업",
+    "자문업",
+    "임대업",
+    "개발업",
+    "서비스업",
     "제조",
     "판매",
     "생산",
     "유통",
     "공급",
     "도소매",
-    "서비스업",
+    "도매",
+    "소매",
     "서비스",
     "사업",
     "등",
     "외",
 )
+# ⚠️ 여기에 "업" 단독을 넣지 말 것. "원양어업" → "원양어" 처럼 멀쩡한 용어가 망가진다.
+# "금융업" · "건설업" 같은 산업명은 보유 기업이 많아 변별력 가중치(scoring.ts)가
+# 알아서 깎으므로, 데이터를 훼손하면서까지 접미어를 벗길 이유가 없다.
+
+# 조각 앞에 붙는 군더더기. "기타 전자부품" 의 "기타" 는 아무 정보가 없다.
+_LEADING = ("기타 ", "각종 ", "일반 ", "기타")
 # 그 자체로는 아무 종목도 특정하지 못하는 값.
 # 상용어가 독립 조각으로 나오면(", 도매") _TRAILING 이 못 잡는다 — 접미가 아니라 전체이므로.
 _STOPWORDS = {
@@ -147,6 +178,26 @@ _STOPWORDS = {
     "개발",
     "시공",
     "설치",
+    # ── 지주사 상용구 ──────────────────────────────────────────
+    # 어떤 뉴스와도 인과가 닿지 않는데 지주회사·복합기업이 빠짐없이 적어 둔다.
+    # 실측 보유 기업 수: 부동산임대 54 · 지주회사 33 · 수출입 30 · 기업인수합병 27.
+    # 매칭되면 그 회사가 "관련 있다" 가 아니라 "지주사다" 라는 뜻일 뿐이다.
+    "지주",
+    "지주회사",
+    "금융지주회사",
+    "비금융지주회사",
+    "부동산임대",
+    "비거주부동산임대",
+    "부동산투자",
+    "부동산투자회사",
+    "부동산",
+    "기업인수합병",
+    "수출입",
+    "금융지원",
+    "투자",
+    "기업",
+    "경영지원",
+    "경영자문",
 }
 _SPLIT = re.compile(r"[,/·;、]|\s및\s|\s+외\s+")
 _BRACKET = re.compile(r"[（(]([^）)]*)[）)]")
@@ -187,6 +238,10 @@ def split_products(raw: str | None) -> list[str]:
     return out
 
 
+def _stopword_key(term: str) -> str:
+    return term.lower().replace(" ", "")
+
+
 def _collect(bucket: list[str], inner: str) -> str:
     bucket.append(inner)
     return " , "
@@ -194,7 +249,8 @@ def _collect(bucket: list[str], inner: str) -> str:
 
 def _strip_trailing(chunk: str) -> str:
     term = " ".join(chunk.split()).strip("-–—·.'\"")
-    # 접미 상용어는 여러 개가 겹쳐 붙는다("제조 판매 등"). 더 이상 안 줄 때까지 반복.
+    # 접미·접두 상용어는 여러 개가 겹쳐 붙는다("기타 전자부품 제조 판매 등").
+    # 더 이상 안 줄 때까지 반복한다.
     changed = True
     while changed and term:
         changed = False
@@ -202,9 +258,14 @@ def _strip_trailing(chunk: str) -> str:
             if term.endswith(suffix) and len(term) > len(suffix):
                 term = term[: -len(suffix)].strip(" ,.")
                 changed = True
+        for prefix in _LEADING:
+            if term.startswith(prefix) and len(term) > len(prefix):
+                term = term[len(prefix) :].strip(" ,.")
+                changed = True
     if len(term) < 2 or len(term) > 40:
         return ""
-    if term.lower() in _STOPWORDS:
+    # 띄어쓰기를 무시하고 대조한다 — "부동산 임대" 와 "부동산임대" 는 같은 말이다.
+    if _stopword_key(term) in _STOPWORDS:
         return ""
     # 숫자·기호만 남은 조각은 버린다.
     if not re.search(r"[0-9A-Za-z가-힣]{2}", term):

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Table, Td, Th } from '@/components/ui/primitives';
+import { LiveQuote } from './live-quote';
 import { formatDate } from '@/lib/shared/format';
 import type { ImpactWithCompany } from '@/lib/queries/events';
 
@@ -13,6 +14,8 @@ import type { ImpactWithCompany } from '@/lib/queries/events';
  *
  * 두 근거를 한 표에 섞지 않는다. 성격이 달라서 같은 칸에 넣으면
  * 어느 쪽이 어느 근거인지 읽는 사람이 구분할 수 없다.
+ *
+ * 현재가만은 예외로 싣는다. 근거가 약할수록 지금 얼마인지가 더 궁금해진다.
  */
 export function MentionTable({
   impacts,
@@ -44,6 +47,7 @@ export function MentionTable({
               <Th>코드</Th>
               <Th>시장</Th>
               <Th>업종</Th>
+              <Th>현재가</Th>
               <Th>{reasonHeader}</Th>
             </tr>
           </thead>
@@ -57,6 +61,9 @@ export function MentionTable({
                 <Td className="text-muted">{impact.company?.market ?? '—'}</Td>
                 <Td className="max-w-[12rem] text-xs text-muted">
                   {impact.company?.industry_name ?? '—'}
+                </Td>
+                <Td>
+                  <LiveQuote code={impact.company?.stock_code ?? null} className="text-xs" />
                 </Td>
                 <Td className="max-w-lg">
                   <Reason impact={impact} kind={kind} />
@@ -80,6 +87,9 @@ export function MentionTable({
             {impact.company?.industry_name ? (
               <p className="mt-0.5 text-xs text-muted">{impact.company.industry_name}</p>
             ) : null}
+            <div className="mt-1.5">
+              <LiveQuote code={impact.company?.stock_code ?? null} className="text-xs" />
+            </div>
             <div className="mt-2">
               <Reason impact={impact} kind={kind} />
             </div>

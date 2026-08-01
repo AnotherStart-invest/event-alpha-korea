@@ -2,18 +2,23 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { ImpactTable } from '@/components/domain/impact-table';
 import { MentionTable } from '@/components/domain/mention-table';
+import { ValueChainView } from '@/components/domain/value-chain';
 import { EventTypeBadge, EvidenceBadge, VariableDirectionMark } from '@/components/domain/badges';
 import { Card, CardContent, SectionTitle, Separator } from '@/components/ui/primitives';
 import { REQUIREMENT_TYPE_LABELS, TIME_HORIZON_LABELS } from '@/lib/db/enums';
 import { formatDateTime } from '@/lib/shared/format';
 import {
+  VISIBLE_PER_STEP,
+  buildValueChain,
   getPublishedEvent,
   groupImpacts,
   hasDirectionJudgement,
   isAnalyzed,
   isPeerImpact,
   type EventDetail,
+  type ValueChain,
 } from '@/lib/queries/events';
+import { LiveQuoteProvider, LiveQuoteStamp } from '@/components/domain/live-quote';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,8 +42,17 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
   if (!detail) notFound();
 
   const { event } = detail;
+  const chain = buildValueChain(detail.steps, detail.impacts);
+
+  // 화면에 뜨는 종목 전체를 한 번에 폴링한다. 종목마다 요청하면 20번이 된다.
+  const codes = Array.from(
+    new Set(
+      detail.impacts.map((i) => i.company?.stock_code).filter((c): c is string => Boolean(c)),
+    ),
+  );
 
   return (
+    <LiveQuoteProvider codes={codes}>
     <article className="space-y-8">
       {/* 헤더 */}
       <header>
@@ -47,6 +61,7 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
           <EventTypeBadge type={event.event_type} />
         </div>
         <h1 className="mt-2 text-xl font-bold leading-snug tracking-tight">{event.title}</h1>
+        <p className="mt-1"><LiveQuoteStamp /></p>
 
         {isAnalyzed(event) ? (
           <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border border-border bg-surface p-4 text-sm sm:grid-cols-4">
@@ -73,10 +88,22 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
         ) : null}
       </header>
 
+      {/*
+        밸류체인은 isAnalyzed 와 **무관하게** 그린다.
+        전파 경로(lib/events/transmission.ts)는 LLM 분석과 별개 경로라서,
+        factual_summary 가 없는 이벤트에도 단계와 종목이 붙어 있다.
+        이 분기를 isAnalyzed 에 묶어 뒀던 탓에 이미 쌓인 505개 단계가
+        화면에 한 번도 나오지 못했고, 그 종목들이 "기사에 언급된 상장사" 라는
+        틀린 제목 아래 섞여 나왔다 — 기사에 이름이 나온 적 없는 종목들이다.
+      */}
+      {chain.hasChain ? (
+        <ValueChainSection detail={detail} chain={chain} />
+      ) : null}
+
       {isAnalyzed(event) ? (
-        <AnalyzedSections detail={detail} />
+        <AnalyzedSections detail={detail} chain={chain} />
       ) : (
-        <MentionOnlySections detail={detail} />
+        <MentionOnlySections detail={detail} chain={chain} />
       )}
 
       <p className="rounded-lg border border-border bg-surface-muted p-3 text-xs leading-relaxed text-muted">
@@ -85,6 +112,34 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
         반드시 원문 기사와 전자공시를 직접 확인하십시오.
       </p>
     </article>
+    </LiveQuoteProvider>
+  );
+}
+
+/** 밸류체인 — 이벤트가 어느 단계로 전이되고 각 단계에 누가 걸리는가. */
+function ValueChainSection({ detail, chain }: { detail: EventDetail; chain: ValueChain }) {
+  const shown = chain.lanes.reduce((sum, lane) => sum + lane.shown.length, 0);
+
+  return (
+    <section>
+      <SectionTitle index={1} hint={`${chain.lanes.length}단계 · ${shown}종목`}>
+        밸류체인 전이 경로
+      </SectionTitle>
+      <p className="mb-3 text-xs leading-relaxed text-muted">
+        사건이 산업을 타고 번지는 순서입니다. 단계마다 관련도가 높은 순으로 최대{' '}
+        {VISIBLE_PER_STEP}종목만 싣습니다. 경로는 AI 추정이고, 종목은 전자공시·거래소
+        데이터에서 코드가 찾습니다 — AI 는 기업명을 출력할 수 없습니다.
+      </p>
+      <ValueChainView chain={chain} />
+      <div className="mt-1">
+        <EvidenceBadge kind="ai" />
+      </div>
+      {detail.event.primary_variable ? (
+        <p className="mt-3 rounded-md border border-border bg-surface-muted px-3 py-2 text-xs text-muted-strong">
+          핵심 변수: <strong className="text-foreground">{detail.event.primary_variable}</strong>
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -94,16 +149,19 @@ export default async function EventDetailPage(props: { params: Promise<{ id: str
  * 무료 티어에서는 LLM 분석 한도가 하루 10건이라 대부분의 이벤트가 여기 해당한다.
  * 전파 경로·방향 판정이 없으므로 그 섹션들을 빈 채로 늘어놓지 않고 감춘다.
  */
-function MentionOnlySections({ detail }: { detail: EventDetail }) {
+function MentionOnlySections({ detail, chain }: { detail: EventDetail; chain: ValueChain }) {
   const { articles, impacts } = detail;
-  // 근거의 성격이 달라 표를 나눈다 — 기사에 이름이 나온 것과 제품군이 겹치는 것.
-  const peers = impacts.filter(isPeerImpact);
-  const mentioned = impacts.filter((impact) => !isPeerImpact(impact));
+  // 전파 경로로 붙은 종목은 위 밸류체인이 이미 보여줬다. 여기 또 넣으면
+  // "기사에 언급된 상장사" 라는 제목이 거짓말이 된다 — 기사에 이름이 나온 적 없다.
+  const rest = impacts.filter((impact) => impact.step_order === null);
+  const peers = rest.filter(isPeerImpact);
+  const mentioned = rest.filter((impact) => !isPeerImpact(impact));
+  const offset = chain.hasChain ? 1 : 0;
 
   return (
     <>
       <section>
-        <SectionTitle index={1} hint={`${articles.length}건`}>
+        <SectionTitle index={offset + 1} hint={`${articles.length}건`}>
           관련 기사
         </SectionTitle>
         <Card>
@@ -130,20 +188,22 @@ function MentionOnlySections({ detail }: { detail: EventDetail }) {
         </Card>
       </section>
 
-      <section>
-        <SectionTitle index={2} hint={`${mentioned.length}종목`}>
-          기사에 언급된 상장사
-        </SectionTitle>
-        <p className="mb-2 text-xs text-muted">
-          기사 본문에 이름이 그대로 나온 종목입니다. 사전 대조로만 찾았으며, 영향의 방향이나
-          크기는 판정하지 않았습니다.
-        </p>
-        <MentionTable impacts={mentioned} />
-      </section>
+      {mentioned.length > 0 ? (
+        <section>
+          <SectionTitle index={offset + 2} hint={`${mentioned.length}종목`}>
+            기사에 언급된 상장사
+          </SectionTitle>
+          <p className="mb-2 text-xs text-muted">
+            기사 본문에 이름이 그대로 나온 종목입니다. 사전 대조로만 찾았으며, 영향의 방향이나
+            크기는 판정하지 않았습니다.
+          </p>
+          <MentionTable impacts={mentioned} />
+        </section>
+      ) : null}
 
       {peers.length > 0 ? (
         <section>
-          <SectionTitle index={3} hint={`${peers.length}종목`}>
+          <SectionTitle index={offset + 3} hint={`${peers.length}종목`}>
             같은 제품군 상장사
           </SectionTitle>
           <p className="mb-2 text-xs text-muted">
@@ -158,18 +218,22 @@ function MentionOnlySections({ detail }: { detail: EventDetail }) {
 }
 
 /** 전체 분석이 끝난 이벤트의 화면 (PRODUCT_SPEC §6.2) */
-function AnalyzedSections({ detail }: { detail: EventDetail }) {
+function AnalyzedSections({ detail, chain }: { detail: EventDetail; chain: ValueChain }) {
   const { event, articles, steps, requirements, impacts } = detail;
-  const groups = groupImpacts(impacts);
-  const judged = hasDirectionJudgement(impacts);
+  // 밸류체인이 이미 보여준 종목은 아래 표에서 뺀다. 같은 종목을 두 번 세면
+  // 화면이 길어지기만 하고 "몇 개가 관련 있나"라는 감각이 무너진다.
+  const rest = chain.hasChain ? impacts.filter((i) => i.step_order === null) : impacts;
+  const groups = groupImpacts(rest);
+  const judged = hasDirectionJudgement(rest);
   const byType = (type: keyof typeof REQUIREMENT_TYPE_LABELS) =>
     requirements.filter((r) => r.requirement_type === type);
+  const offset = chain.hasChain ? 1 : 0;
 
   return (
     <>
       {/* 1. 사건 요약 */}
       <section>
-        <SectionTitle index={1} hint="기사에 명시된 사실만">
+        <SectionTitle index={offset + 1} hint="기사에 명시된 사실만">
           사건 요약
         </SectionTitle>
         <Card>
@@ -194,14 +258,13 @@ function AnalyzedSections({ detail }: { detail: EventDetail }) {
         </Card>
       </section>
 
-      {/* 2. 경제적 전파 경로 */}
-      <section>
-        <SectionTitle index={2} hint="AI 추정">
-          경제적 전파 경로
-        </SectionTitle>
-        {steps.length === 0 ? (
-          <p className="text-xs text-muted">전파 경로가 생성되지 않았습니다.</p>
-        ) : (
+      {/* 전파 경로는 위 밸류체인 섹션이 종목까지 붙여서 보여준다.
+          여기서는 밸류체인을 못 그린 경우(단계는 있는데 걸린 종목이 없다)만 글로 남긴다. */}
+      {!chain.hasChain && steps.length > 0 ? (
+        <section>
+          <SectionTitle index={offset + 2} hint="AI 추정">
+            경제적 전파 경로
+          </SectionTitle>
           <ol className="space-y-0">
             {steps.map((step, index) => (
               <li key={step.id} className="flex gap-3">
@@ -215,11 +278,11 @@ function AnalyzedSections({ detail }: { detail: EventDetail }) {
               </li>
             ))}
           </ol>
-        )}
-        <div className="mt-1">
-          <EvidenceBadge kind="ai" />
-        </div>
-      </section>
+          <div className="mt-1">
+            <EvidenceBadge kind="ai" />
+          </div>
+        </section>
+      ) : null}
 
       <Separator />
 
@@ -227,14 +290,14 @@ function AnalyzedSections({ detail }: { detail: EventDetail }) {
       {judged ? (
         <>
           <section>
-            <SectionTitle index={3} hint={`${groups.positive.length}종목`}>
+            <SectionTitle index={offset + 3} hint={`${groups.positive.length}종목`}>
               긍정 영향 가능성 종목
             </SectionTitle>
             <ImpactTable impacts={groups.positive} />
           </section>
 
           <section>
-            <SectionTitle index={4} hint={`${groups.negative.length}종목`}>
+            <SectionTitle index={offset + 4} hint={`${groups.negative.length}종목`}>
               부정 영향 가능성 종목
             </SectionTitle>
             <ImpactTable impacts={groups.negative} />
@@ -249,7 +312,7 @@ function AnalyzedSections({ detail }: { detail: EventDetail }) {
         </>
       ) : (
         <section>
-          <SectionTitle index={3} hint={`${groups.other.length}종목`}>
+          <SectionTitle index={offset + 3} hint={`${groups.other.length}종목`}>
             영향 범위가 겹치는 종목
           </SectionTitle>
           <p className="mb-2 text-xs text-muted">
@@ -261,16 +324,19 @@ function AnalyzedSections({ detail }: { detail: EventDetail }) {
       )}
 
       {/* 5. 공급망 및 2차 */}
-      <section>
-        <SectionTitle index={5} hint="직접 실적 영향은 미확인">
-          공급망 및 2차 관련 종목
-        </SectionTitle>
-        <ImpactTable impacts={groups.supplyChain} />
-      </section>
+      {groups.supplyChain.length > 0 ? (
+        <section>
+          <SectionTitle index={offset + 5} hint="직접 실적 영향은 미확인">
+            공급망 및 2차 관련 종목
+          </SectionTitle>
+          <ImpactTable impacts={groups.supplyChain} />
+        </section>
+      ) : null}
 
       {/* 6. 단순 테마 */}
+      {groups.thematic.length > 0 ? (
       <section>
-        <SectionTitle index={6} hint="근거 부족 · 낮은 신뢰도">
+        <SectionTitle index={offset + 6} hint="근거 부족 · 낮은 신뢰도">
           단순 테마 종목
         </SectionTitle>
         <details className="rounded-lg border border-dashed border-border-strong">
@@ -285,18 +351,19 @@ function AnalyzedSections({ detail }: { detail: EventDetail }) {
           </div>
         </details>
       </section>
+      ) : null}
 
       <Separator />
 
       {/* 7~9. 확인 사항 */}
       <section className="grid gap-6 md:grid-cols-3">
-        <RequirementList index={7} type="evidence_to_check" items={byType('evidence_to_check')} />
+        <RequirementList index={offset + 7} type="evidence_to_check" items={byType('evidence_to_check')} />
         <RequirementList
-          index={8}
+          index={offset + 8}
           type="invalidation_condition"
           items={byType('invalidation_condition')}
         />
-        <RequirementList index={9} type="follow_up_event" items={byType('follow_up_event')} />
+        <RequirementList index={offset + 9} type="follow_up_event" items={byType('follow_up_event')} />
       </section>
     </>
   );

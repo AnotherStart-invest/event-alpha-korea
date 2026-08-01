@@ -43,6 +43,16 @@ export type CompanyRow = Timestamps & {
   verification_status: VerificationStatus;
   search_text: string | null;
   embedding: number[] | null;
+  /**
+   * 이 기업의 제품 노출 개수. 트리거가 유지한다 (0009).
+   * 집중도 점수의 분모 — 12개 파는 회사의 1개 매칭과 1개 파는 회사의 1개 매칭을 가른다.
+   */
+  product_exposure_count: number;
+  /** 시가총액(원). 억원이 아니다 (0009) */
+  market_cap: number | null;
+  shares_outstanding: number | null;
+  close_price: number | null;
+  price_updated_at: string | null;
   /** KRX 상장목록에 현재 있는가. false 는 상장폐지 껍데기 (0004) */
   is_listed: boolean;
   /** KRX 상장목록의 "주요제품" 원문 (0004) */
@@ -151,11 +161,20 @@ export type EventArticleRow = {
   similarity: number | null;
 }
 
+/** 밸류체인상 위치. 단계 순서에서 도출한다 (0009) */
+export type ChainPosition = 'upstream' | 'midstream' | 'downstream';
+
 export type EventTransmissionStepRow = {
   id: string;
   event_id: string;
   step_order: number;
   description: string;
+  /** 이 단계에 걸리는 기업들 입장에서의 손익 방향 (0009) */
+  direction: ImpactDirection | null;
+  relation: RelationType | null;
+  /** 왜 그 방향인지 (0009) */
+  reason: string | null;
+  chain_position: ChainPosition | null;
 }
 
 export type EventRequirementRow = {
@@ -174,6 +193,13 @@ export type ScoreBreakdown = {
   disclosure: number;
   recency: number;
   thematic: number;
+  /**
+   * 사업 집중도 — 매칭이 그 회사가 파는 제품 중 몇 분의 몇인가 (0009).
+   * 0009 이전에 채점된 행에는 없다. 화면은 없을 때를 견뎌야 한다.
+   */
+  focus?: number;
+  /** 업종이 이벤트가 건드리는 산업과 맞는가 (0009). 위와 같이 옛 행에는 없다. */
+  industry?: number;
   /**
    * 기사에 이름이 직접 나와서 받은 점수 (lib/events/mentions.ts).
    * 다른 항목과 달리 LLM 분석 없이도 채워지므로 나머지가 전부 0 일 수 있다.
@@ -200,6 +226,11 @@ export type EventImpactRow = Timestamps & {
   confidence_score: number | null;
   rationale: string | null;
   transmission_path: string[];
+  /**
+   * 이 종목이 걸린 전파 단계 번호 (0009).
+   * null 은 전파 경로가 아닌 다른 경로(기사 직접 언급·동종 확장)로 붙은 종목이다.
+   */
+  step_order: number | null;
   evidence_summary: string | null;
   missing_evidence: string[];
   review_status: ReviewStatus;

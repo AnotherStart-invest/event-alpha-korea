@@ -221,6 +221,8 @@ type ImpactRow = {
   breakdown: ReturnType<typeof scoreCandidate>;
   rationale: string;
   transmissionPath: string[];
+  /** 어느 단계에서 걸렸는가. 화면이 밸류체인 레인을 그리는 근거다 (0009) */
+  stepOrder: number;
   evidenceIds: string[];
 };
 
@@ -264,6 +266,7 @@ function build(
     breakdown,
     rationale: `${step.reason} (전파 ${stepOrder}단계: ${step.step})`,
     transmissionPath: [step.step],
+    stepOrder,
     evidenceIds,
   };
 }
@@ -329,9 +332,33 @@ async function persistSteps(
       event_id: eventId,
       step_order: index + 1,
       description: step.step,
+      // LLM 은 단계마다 방향·관계·근거를 이미 주고 있었다. 0009 이전에는
+      // description 만 저장하고 나머지를 버려서, 화면이 "이 단계가 수혜인지
+      // 피해인지"를 말할 수 없었다.
+      direction: step.direction,
+      relation: step.relation,
+      reason: step.reason,
+      chain_position: chainPosition(index + 1, steps.length),
     })),
   );
   if (error) throw new Error(`전파 단계 저장 실패: ${error.message}`);
+}
+
+/**
+ * 밸류체인상 위치를 단계 순서에서 도출한다.
+ *
+ * LLM 에게 직접 물어보지 않는 이유: 산업마다 밸류체인 축이 달라서
+ * (반도체의 "소재"와 조선의 "소재"는 층위가 다르다) 고정 축을 강요하면
+ * 억지 매핑이 된다. 전파 경로는 이미 사건에서 멀어지는 순서로 생성되므로
+ * 그 순서 자체가 상류→하류다.
+ *
+ * 단계가 하나뿐이면 상·하류를 말할 근거가 없으므로 midstream 으로 둔다.
+ */
+function chainPosition(stepOrder: number, total: number): 'upstream' | 'midstream' | 'downstream' {
+  if (total === 1) return 'midstream';
+  if (stepOrder === 1) return 'upstream';
+  if (stepOrder === total) return 'downstream';
+  return 'midstream';
 }
 
 async function persistImpacts(
@@ -355,6 +382,7 @@ async function persistImpacts(
         confidence_score: null,
         rationale: row.rationale,
         transmission_path: row.transmissionPath,
+        step_order: row.stepOrder,
         missing_evidence: ['실적 반영 규모는 확인되지 않았습니다.'],
         review_status: 'pending' as const,
         is_manual: false,

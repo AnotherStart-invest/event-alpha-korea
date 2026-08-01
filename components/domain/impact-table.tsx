@@ -1,19 +1,35 @@
 import Link from 'next/link';
 import { Table, Td, Th } from '@/components/ui/primitives';
 import { EvidenceBadge, LevelBadge, RelationBadge, strongestEvidenceKind } from './badges';
+import { LiveQuote } from './live-quote';
 import { ScoreCell } from './score';
 import { formatDate } from '@/lib/shared/format';
-import type { ImpactWithCompany } from '@/lib/queries/events';
+import { VISIBLE_PER_GROUP, compareForDisplay, type ImpactWithCompany } from '@/lib/queries/events';
 
 /**
  * 영향 종목 표 (PRODUCT_SPEC §6.2 3~6번 섹션 공통).
  *
  * 모바일에서는 가로 스크롤 대신 카드 리스트로 전환한다.
+ *
+ * **관련도 순으로 상위 몇 개만 싣는다.** 예전에는 매칭된 종목을 전부 늘어놨는데,
+ * 한 이벤트에 18종목이 같은 KRX 상용문구("주요제품 …이 이 이벤트의 영향 범위와
+ * 겹칩니다")를 달고 나오면 읽는 사람이 그중 무엇이 중요한지 알 수 없다.
+ * 나열은 정보가 아니다.
  */
-export function ImpactTable({ impacts }: { impacts: ImpactWithCompany[] }) {
+export function ImpactTable({
+  impacts,
+  limit = VISIBLE_PER_GROUP,
+}: {
+  impacts: ImpactWithCompany[];
+  limit?: number;
+}) {
   if (impacts.length === 0) {
     return <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted">해당 종목이 없습니다.</p>;
   }
+
+  const ranked = [...impacts].sort(compareForDisplay);
+  const shown = ranked.slice(0, limit);
+  const hidden = ranked.length - shown.length;
 
   return (
     <>
@@ -26,6 +42,7 @@ export function ImpactTable({ impacts }: { impacts: ImpactWithCompany[] }) {
               <Th>코드</Th>
               <Th>시장</Th>
               <Th className="text-right">관련도</Th>
+              <Th>현재가</Th>
               <Th>강도</Th>
               <Th>관계</Th>
               <Th>영향 경로 · 연결 근거</Th>
@@ -34,7 +51,7 @@ export function ImpactTable({ impacts }: { impacts: ImpactWithCompany[] }) {
             </tr>
           </thead>
           <tbody>
-            {impacts.map((impact) => (
+            {shown.map((impact) => (
               <tr key={impact.id} className="align-top">
                 <Td className="font-medium">
                   {impact.company?.stock_code ? (
@@ -52,6 +69,9 @@ export function ImpactTable({ impacts }: { impacts: ImpactWithCompany[] }) {
                 <Td className="text-muted">{impact.company?.market ?? '—'}</Td>
                 <Td className="text-right">
                   <ScoreCell score={impact.relevance_score} breakdown={impact.score_breakdown} />
+                </Td>
+                <Td>
+                  <LiveQuote code={impact.company?.stock_code ?? null} className="text-xs" />
                 </Td>
                 <Td>
                   <LevelBadge level={impact.impact_level} />
@@ -86,7 +106,7 @@ export function ImpactTable({ impacts }: { impacts: ImpactWithCompany[] }) {
 
       {/* 모바일 */}
       <ul className="space-y-2 md:hidden">
-        {impacts.map((impact) => (
+        {shown.map((impact) => (
           <li key={impact.id} className="rounded-lg border border-border bg-surface p-3">
             <div className="flex items-baseline justify-between gap-2">
               <div>
@@ -96,6 +116,9 @@ export function ImpactTable({ impacts }: { impacts: ImpactWithCompany[] }) {
                 </p>
               </div>
               <ScoreCell score={impact.relevance_score} breakdown={impact.score_breakdown} />
+            </div>
+            <div className="mt-1.5">
+              <LiveQuote code={impact.company?.stock_code ?? null} className="text-xs" />
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               <LevelBadge level={impact.impact_level} />
@@ -109,6 +132,10 @@ export function ImpactTable({ impacts }: { impacts: ImpactWithCompany[] }) {
           </li>
         ))}
       </ul>
+
+      {hidden > 0 ? (
+        <p className="mt-1.5 text-[11px] text-muted">근거가 약해 제외한 종목 {hidden}개</p>
+      ) : null}
     </>
   );
 }
