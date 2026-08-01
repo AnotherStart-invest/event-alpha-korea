@@ -3,6 +3,7 @@ import type { ServiceClient } from '@/lib/db/service';
 import type { EventStatus } from '@/lib/db/enums';
 import type { ScoreBreakdown } from '@/lib/db/types';
 import type { Logger } from '@/lib/shared/logger';
+import { hasMentionAnchor } from './anchor';
 import {
   type PeerCompany,
   type PeerExposure,
@@ -112,7 +113,12 @@ export async function linkPeerCompanies(
     stats.seeds += seedIds.length;
     stats.impacts += await insertImpacts(supabase, event.id, usable);
 
-    if (settings?.auto_publish && event.status !== 'published') {
+    // 동종 확장은 씨앗을 한 발 넓힌 것뿐이라 그 자체로 기사에 앵커되지 않는다.
+    if (
+      settings?.auto_publish &&
+      event.status !== 'published' &&
+      (await hasMentionAnchor(supabase, event.id))
+    ) {
       await publish(supabase, event.id);
       stats.published++;
     }

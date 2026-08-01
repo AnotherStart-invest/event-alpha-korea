@@ -24,6 +24,7 @@ import { buildImpactUser, chunkCandidates, deriveImpacts, validateImpacts } from
 import type { ModelTier } from '@/lib/llm/models';
 import type { EventQuery } from '@/lib/matching/types';
 import { MAX_RETRY, assertTransition } from './state';
+import { hasMentionAnchor } from './anchor';
 
 export type AnalyzeStats = {
   processed: number;
@@ -288,7 +289,8 @@ async function analyzeOne(
 /**
  * 분석을 끝낸 이벤트의 상태를 정한다.
  *
- * auto_publish 가 켜져 있고 종목이 하나라도 붙었으면 바로 공개한다.
+ * auto_publish 가 켜져 있고, 종목이 붙었고, **기사에 상장사 이름이 실제로 나왔을 때만**
+ * 공개한다. 마지막 조건이 없으면 용어가 겹쳤다는 이유만으로 아무 기사나 공개된다.
  * published_requires_ts 제약 때문에 두 타임스탬프를 같이 채워야 한다.
  */
 async function finish(
@@ -297,7 +299,8 @@ async function finish(
   config: AnalyzeConfig,
   impactCount: number,
 ): Promise<void> {
-  const publish = config.autoPublish && impactCount > 0;
+  const publish =
+    config.autoPublish && impactCount > 0 && (await hasMentionAnchor(supabase, eventId));
   const now = new Date().toISOString();
 
   const { error } = await supabase

@@ -8,6 +8,7 @@ import { callLlm } from '@/lib/llm';
 import { transmissionSchema, type TransmissionStep } from '@/lib/llm/schemas';
 import { TRANSMISSION_SYSTEM, buildTransmissionUser, type ArticleForPrompt } from '@/lib/llm/prompts';
 import { findCandidates } from '@/lib/matching/candidates';
+import { hasMentionAnchor } from './anchor';
 import { applyHardRules, scoreCandidate } from '@/lib/matching/scoring';
 import type { Candidate, EventQuery } from '@/lib/matching/types';
 
@@ -191,7 +192,14 @@ async function traceOne(
   await persistImpacts(supabase, event.id, finalRows);
   await markTraced(supabase, event.id);
 
-  if (autoPublish && finalRows.length > 0 && event.status !== 'published') {
+  // 기사에 상장사 이름이 나오지 않은 이벤트는 공개하지 않는다.
+  // 전파 경로는 LLM 이 만든 용어로 종목을 찾으므로 그 자체로는 기사에 앵커되지 않는다.
+  if (
+    autoPublish &&
+    finalRows.length > 0 &&
+    event.status !== 'published' &&
+    (await hasMentionAnchor(supabase, event.id))
+  ) {
     await publish(supabase, event.id);
   }
 

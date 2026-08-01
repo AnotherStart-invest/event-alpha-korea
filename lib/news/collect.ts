@@ -3,6 +3,7 @@ import type { ServiceClient } from '@/lib/db/service';
 import type { Logger } from '@/lib/shared/logger';
 import { errorMessage } from '@/lib/shared/errors';
 import { dedupeBatch, searchNews, type CollectedArticle } from './naver';
+import { judgeEconomic } from './relevance';
 
 /**
  * 한 tick 에서 처리할 키워드 수 상한.
@@ -23,6 +24,8 @@ export type CollectStats = {
   unique: number;
   inserted: number;
   failedKeywords: number;
+  /** 경제 기사가 아니라 버린 건수 (lib/news/relevance.ts) */
+  droppedNonEconomic: number;
 };
 
 export async function collectNews(
@@ -57,7 +60,18 @@ export async function collectNews(
   }
 
   const unique = dedupeBatch(collected);
-  const inserted = await upsertArticles(supabase, unique);
+
+  // 경제와 무관한 기사를 여기서 끊는다. 네이버 검색 API 에는 분야 파라미터가 없어서
+  // "가동 중단" 같은 일반어가 폭염·사건사고 기사를 대량으로 끌고 온다.
+  const economic = unique.filter((article) => {
+    const verdict = judgeEconomic(article.title);
+    if (!verdict.economic) {
+      log.debug('비경제 기사 제외', { title: article.title.slice(0, 40), reason: verdict.reason });
+    }
+    return verdict.economic;
+  });
+
+  const inserted = await upsertArticles(supabase, economic);
 
   return {
     keywords: keywords.length,
@@ -65,6 +79,7 @@ export async function collectNews(
     unique: unique.length,
     inserted,
     failedKeywords,
+    droppedNonEconomic: unique.length - economic.length,
   };
 }
 
