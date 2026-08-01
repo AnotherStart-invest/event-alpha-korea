@@ -70,7 +70,12 @@ export function CompanyChip({ impact }: { impact: ImpactWithCompany }) {
 
       <details className="group mt-1.5">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] text-muted-strong">
-          <EvidenceBadge kind={strongestEvidenceKind(impact.evidence.map((e) => e.source_type))} />
+          <EvidenceBadge
+            kind={strongestEvidenceKind(
+              impact.evidence.map((e) => e.source_type),
+              typeof breakdown?.llm === 'number',
+            )}
+          />
           <span className="group-open:hidden">왜 이 종목인가</span>
           <span className="hidden group-open:inline">접기</span>
         </summary>

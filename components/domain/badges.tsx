@@ -48,10 +48,17 @@ function evidenceHint(kind: EvidenceKind): string {
   }
 }
 
-/** 근거 목록에서 가장 강한 배지를 고른다. */
-export function strongestEvidenceKind(sourceTypes: string[]): EvidenceKind {
+/**
+ * 근거 목록에서 가장 강한 배지를 고른다.
+ *
+ * `llm` 은 LLM 이 사업 구조로 지목하고 실존이 확인된 종목이다. 이쪽은 evidence 행이
+ * 없어서 그냥 두면 **"근거 부족"** 으로 찍히는데, 뜻이 정반대로 읽힌다 —
+ * 문자열이 우연히 겹친 종목보다 근거가 강한 쪽이다.
+ */
+export function strongestEvidenceKind(sourceTypes: string[], llm = false): EvidenceKind {
   if (sourceTypes.includes('dart')) return 'dart';
   if (sourceTypes.length > 0) return 'news';
+  if (llm) return 'ai';
   return 'none';
 }
 

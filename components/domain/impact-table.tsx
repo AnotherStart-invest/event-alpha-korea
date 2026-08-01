@@ -1,10 +1,20 @@
-import Link from 'next/link';
-import { Table, Td, Th } from '@/components/ui/primitives';
-import { EvidenceBadge, LevelBadge, RelationBadge, strongestEvidenceKind } from './badges';
-import { LiveQuote } from './live-quote';
-import { ScoreCell } from './score';
-import { formatDate } from '@/lib/shared/format';
-import { VISIBLE_PER_GROUP, compareForDisplay, type ImpactWithCompany } from '@/lib/queries/events';
+import Link from "next/link";
+import { Table, Td, Th } from "@/components/ui/primitives";
+import {
+  EvidenceBadge,
+  LevelBadge,
+  RelationBadge,
+  strongestEvidenceKind,
+} from "./badges";
+import { LiveQuote } from "./live-quote";
+import { ScoreCell } from "./score";
+import { formatDate } from "@/lib/shared/format";
+import {
+  VISIBLE_PER_GROUP,
+  compareForDisplay,
+  type ImpactWithCompany,
+} from "@/lib/queries/events";
+import type { ScoreBreakdown } from "@/lib/db/types";
 
 /**
  * 영향 종목 표 (PRODUCT_SPEC §6.2 3~6번 섹션 공통).
@@ -24,7 +34,11 @@ export function ImpactTable({
   limit?: number;
 }) {
   if (impacts.length === 0) {
-    return <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted">해당 종목이 없습니다.</p>;
+    return (
+      <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted">
+        해당 종목이 없습니다.
+      </p>
+    );
   }
 
   const ranked = [...impacts].sort(compareForDisplay);
@@ -62,16 +76,24 @@ export function ImpactTable({
                       {impact.company.company_name}
                     </Link>
                   ) : (
-                    (impact.company?.company_name ?? '—')
+                    (impact.company?.company_name ?? "—")
                   )}
                 </Td>
-                <Td className="tnum text-muted">{impact.company?.stock_code ?? '—'}</Td>
-                <Td className="text-muted">{impact.company?.market ?? '—'}</Td>
+                <Td className="tnum text-muted">
+                  {impact.company?.stock_code ?? "—"}
+                </Td>
+                <Td className="text-muted">{impact.company?.market ?? "—"}</Td>
                 <Td className="text-right">
-                  <ScoreCell score={impact.relevance_score} breakdown={impact.score_breakdown} />
+                  <ScoreCell
+                    score={impact.relevance_score}
+                    breakdown={impact.score_breakdown}
+                  />
                 </Td>
                 <Td>
-                  <LiveQuote code={impact.company?.stock_code ?? null} className="text-xs" />
+                  <LiveQuote
+                    code={impact.company?.stock_code ?? null}
+                    className="text-xs"
+                  />
                 </Td>
                 <Td>
                   <LevelBadge level={impact.impact_level} />
@@ -80,15 +102,17 @@ export function ImpactTable({
                   <RelationBadge relation={impact.relation_type} />
                 </Td>
                 <Td className="max-w-md">
-                  <p className="text-xs leading-relaxed">{impact.rationale ?? '—'}</p>
+                  <p className="text-xs leading-relaxed">
+                    {impact.rationale ?? "—"}
+                  </p>
                   {impact.transmission_path.length > 0 ? (
                     <p className="mt-1 text-[11px] text-muted">
-                      {impact.transmission_path.join(' → ')}
+                      {impact.transmission_path.join(" → ")}
                     </p>
                   ) : null}
                   {impact.missing_evidence.length > 0 ? (
                     <p className="mt-1 text-[11px] text-warn">
-                      확인 필요: {impact.missing_evidence.join(', ')}
+                      확인 필요: {impact.missing_evidence.join(", ")}
                     </p>
                   ) : null}
                 </Td>
@@ -96,7 +120,13 @@ export function ImpactTable({
                   <EvidenceList impact={impact} />
                 </Td>
                 <Td>
-                  <EvidenceBadge kind={strongestEvidenceKind(impact.evidence.map((e) => e.source_type))} />
+                  <EvidenceBadge
+                    kind={strongestEvidenceKind(
+                      impact.evidence.map((e) => e.source_type),
+                      typeof (impact.score_breakdown as ScoreBreakdown)?.llm ===
+                        "number",
+                    )}
+                  />
                 </Td>
               </tr>
             ))}
@@ -107,25 +137,45 @@ export function ImpactTable({
       {/* 모바일 */}
       <ul className="space-y-2 md:hidden">
         {shown.map((impact) => (
-          <li key={impact.id} className="rounded-lg border border-border bg-surface p-3">
+          <li
+            key={impact.id}
+            className="rounded-lg border border-border bg-surface p-3"
+          >
             <div className="flex items-baseline justify-between gap-2">
               <div>
-                <p className="text-sm font-semibold">{impact.company?.company_name ?? '—'}</p>
+                <p className="text-sm font-semibold">
+                  {impact.company?.company_name ?? "—"}
+                </p>
                 <p className="tnum text-xs text-muted">
-                  {impact.company?.stock_code ?? '—'} · {impact.company?.market ?? '—'}
+                  {impact.company?.stock_code ?? "—"} ·{" "}
+                  {impact.company?.market ?? "—"}
                 </p>
               </div>
-              <ScoreCell score={impact.relevance_score} breakdown={impact.score_breakdown} />
+              <ScoreCell
+                score={impact.relevance_score}
+                breakdown={impact.score_breakdown}
+              />
             </div>
             <div className="mt-1.5">
-              <LiveQuote code={impact.company?.stock_code ?? null} className="text-xs" />
+              <LiveQuote
+                code={impact.company?.stock_code ?? null}
+                className="text-xs"
+              />
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               <LevelBadge level={impact.impact_level} />
               <RelationBadge relation={impact.relation_type} />
-              <EvidenceBadge kind={strongestEvidenceKind(impact.evidence.map((e) => e.source_type))} />
+              <EvidenceBadge
+                kind={strongestEvidenceKind(
+                  impact.evidence.map((e) => e.source_type),
+                  typeof (impact.score_breakdown as ScoreBreakdown)?.llm ===
+                    "number",
+                )}
+              />
             </div>
-            <p className="mt-2 text-xs leading-relaxed">{impact.rationale ?? '—'}</p>
+            <p className="mt-2 text-xs leading-relaxed">
+              {impact.rationale ?? "—"}
+            </p>
             <div className="mt-2">
               <EvidenceList impact={impact} />
             </div>
@@ -134,7 +184,9 @@ export function ImpactTable({
       </ul>
 
       {hidden > 0 ? (
-        <p className="mt-1.5 text-[11px] text-muted">근거가 약해 제외한 종목 {hidden}개</p>
+        <p className="mt-1.5 text-[11px] text-muted">
+          근거가 약해 제외한 종목 {hidden}개
+        </p>
       ) : null}
     </>
   );
@@ -160,9 +212,14 @@ function EvidenceList({ impact }: { impact: ImpactWithCompany }) {
           ) : (
             <span>{evidence.source_title}</span>
           )}
-          <span className="text-muted"> · {formatDate(evidence.source_date)}</span>
+          <span className="text-muted">
+            {" "}
+            · {formatDate(evidence.source_date)}
+          </span>
           {evidence.excerpt ? (
-            <p className="mt-0.5 line-clamp-2 text-muted">&ldquo;{evidence.excerpt}&rdquo;</p>
+            <p className="mt-0.5 line-clamp-2 text-muted">
+              &ldquo;{evidence.excerpt}&rdquo;
+            </p>
           ) : null}
         </li>
       ))}

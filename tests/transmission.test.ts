@@ -88,9 +88,24 @@ describe('TRANSMISSION_SYSTEM', () => {
     expect(findBannedPhrases(rest)).toEqual([]);
   });
 
-  it('기업명 금지와 수요 측 지시가 프롬프트에 남아 있다', () => {
-    expect(TRANSMISSION_SYSTEM).toContain('기업명');
+  /**
+   * 불변식이 바뀌었다. 예전에는 "기업명을 쓰지 마라" 였지만, 그 대가로 KRX 주요제품
+   * 문자열 매칭이 종목을 찾는 유일한 다리가 됐고 그게 품질의 상한이었다.
+   * 지금은 **"국내 상장사만, 확실할 때만"** 이고 실존 검증은 코드가 한다
+   * (lib/matching/resolve.ts).
+   */
+  it('상장사 한정·불확실하면 쓰지 말라는 지시가 프롬프트에 남아 있다', () => {
+    expect(TRANSMISSION_SYSTEM).toContain('상장사만');
+    expect(TRANSMISSION_SYSTEM).toContain('확실하지 않으면 쓰지 마라');
+    expect(TRANSMISSION_SYSTEM).toContain('종목코드를 쓰지 않는다');
+  });
+
+  it('수요 측 지시가 프롬프트에 남아 있다', () => {
     expect(TRANSMISSION_SYSTEM).toContain('수요 측');
+  });
+
+  it('규모로 고르지 말라는 지시가 남아 있다 — 대형주를 넣는 게 가장 흔한 실수다', () => {
+    expect(TRANSMISSION_SYSTEM).toContain('규모나 인지도로 고르지 마라');
   });
 
   /**

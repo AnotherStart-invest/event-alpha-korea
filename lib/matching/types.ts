@@ -74,6 +74,12 @@ export type ScoreBreakdown = {
   mention?: number;
   /** 동종 확장 점수. scoreCandidate 는 채우지 않는다 (lib/events/peers.ts 전용) */
   peer?: number;
+  /**
+   * LLM 이 사업 구조로 지목하고 실존이 확인된 종목 (lib/events/transmission.ts 전용).
+   * 문자열 매칭 항목이 전부 0 인 이유를 화면이 설명할 수 있어야 하므로 마커를 남긴다 —
+   * 이게 없으면 "근거 부족" 배지가 붙어 정반대로 읽힌다.
+   */
+  llm?: number;
   total: number;
   notes: string[];
 };

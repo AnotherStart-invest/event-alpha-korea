@@ -210,6 +210,8 @@ export type ScoreBreakdown = {
    * 이 값이 있으면 "동종 확장으로 붙은 종목"이고, 다시 씨앗이 되지 않는다.
    */
   peer?: number;
+  /** LLM 이 사업 구조로 지목하고 실존이 확인된 종목 (lib/events/transmission.ts) */
+  llm?: number;
   total: number;
   notes: string[];
 }

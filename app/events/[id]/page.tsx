@@ -144,9 +144,9 @@ function ValueChainSection({ detail, chain }: { detail: EventDetail; chain: Valu
         밸류체인 전이 경로
       </SectionTitle>
       <p className="mb-3 text-xs leading-relaxed text-muted">
-        사건이 산업을 타고 번지는 순서입니다. 단계마다 관련도가 높은 순으로 최대{' '}
-        {VISIBLE_PER_STEP}종목만 싣습니다. 경로는 AI 추정이고, 종목은 전자공시·거래소
-        데이터에서 코드가 찾습니다 — AI 는 기업명을 출력할 수 없습니다.
+        사건이 산업을 타고 번지는 순서입니다. 단계마다 최대 {VISIBLE_PER_STEP}종목만
+        싣습니다. 경로와 종목은 AI 가 사업 구조로 판단하고, <strong>코드가 상장사 사전에
+        대조해 실존을 확인</strong>합니다 — 존재하지 않는 종목은 화면에 오를 수 없습니다.
       </p>
       <ValueChainView chain={chain} />
       <div className="mt-1">

@@ -9,8 +9,10 @@ import { transmissionSchema, type TransmissionStep } from '@/lib/llm/schemas';
 import { TRANSMISSION_SYSTEM, buildTransmissionUser, type ArticleForPrompt } from '@/lib/llm/prompts';
 import { findCandidates } from '@/lib/matching/candidates';
 import { hasMentionAnchor } from './anchor';
+import { loadMentionDict } from './mentions';
+import { resolveCompanyNames } from '@/lib/matching/resolve';
 import { applyHardRules, scoreCandidate } from '@/lib/matching/scoring';
-import type { Candidate, EventQuery } from '@/lib/matching/types';
+import type { Candidate, EventQuery, ScoreBreakdown } from '@/lib/matching/types';
 
 /**
  * 전파 경로를 그리고, 그 경로에 걸리는 종목을 찾는다.
@@ -21,9 +23,19 @@ import type { Candidate, EventQuery } from '@/lib/matching/types';
  * 철강값이 떨어지면 철강사는 부정적이지만 철강을 사는 조선·자동차는 수혜인데,
  * 제품 매칭으로는 후자를 영원히 못 찾는다.
  *
- * 여기서 LLM 이 하는 일은 딱 하나다: "이 사건이 어떤 제품·산업에 어떤 방향으로
- * 전이되는가"를 단계별로 말하는 것. **기업명은 출력할 수 없다**(스키마에 필드가 없다).
- * 실제 종목은 findCandidates 가 DB 에서 결정론적으로 찾고, 점수도 코드가 매긴다.
+ * 종목을 찾는 경로는 두 개이고 **순서가 중요하다.**
+ *
+ * 1순위 — LLM 이 사업 구조로 지목한 회사(step.companies).
+ *   원래 이 시스템은 "LLM 은 기업명을 출력할 수 없다" 를 불변식으로 삼았다.
+ *   환각 차단은 됐지만 그 대가로 KRX 주요제품 문자열 매칭이 유일한 다리가 됐고,
+ *   그게 품질의 상한이었다 — "소프트웨어 개발"(13개사) 하나로 넷마블과 셀바스AI 가
+ *   같이 걸리고, 밸류체인 전·후방은 문자열로 이을 방법이 없었다.
+ *   불변식을 **"LLM 은 제안하고 코드가 실존을 검증한다"** 로 바꿨다
+ *   (lib/matching/resolve.ts). 없는 종목이 뜨는 일은 여전히 불가능하다.
+ *
+ * 2순위 — 제품 문자열 매칭(findCandidates).
+ *   LLM 이 아무 회사도 못 댄 단계를 메우는 보조 경로다. "왜 이 회사인가" 를
+ *   말하지 못하므로 앞자리를 주지 않는다.
  *
  * 이벤트당 LLM 호출은 1회(cheap)다.
  */
@@ -46,6 +58,19 @@ const MAX_IMPACTS_PER_EVENT = 20;
 
 /** 한 단계가 끌고 올 수 있는 종목 수 상한. 단계 하나가 화면을 다 먹지 않게. */
 const MAX_IMPACTS_PER_STEP = 10;
+
+/**
+ * LLM 이 사업 구조로 지목하고 상장사 사전에 실존이 확인된 종목의 점수.
+ *
+ * 문자열 매칭 최고점(제품 20 + 집중도 20 + 공시 15 = 55 근처)보다 높게 둔다.
+ * 근거의 성격이 다르기 때문이다 — 이쪽은 "왜 이 회사인가" 를 사업 구조로 말할 수
+ * 있고, 저쪽은 "주요제품 문자열이 겹친다" 가 전부다. 화면에서 앞자리를 차지해야
+ * 하는 쪽은 전자다.
+ *
+ * 만점을 주지 않는 이유: LLM 의 판단이고 공시로 대조한 것이 아니다.
+ * 매출 비중·고객사 확인이 붙으면 그때 더 올라가야 한다.
+ */
+const LLM_NAMED_SCORE = 65;
 
 type EventRow = {
   id: string;
@@ -162,8 +187,55 @@ async function traceOne(
   const rows: ImpactRow[] = [];
   const seen = new Set<string>();
 
+  // LLM 이 지목한 회사 이름을 실존 상장사로 해석한다. 사전에 없으면 버린다.
+  const dict = await loadMentionDict(supabase);
+
   for (let i = 0; i < traced.steps.length; i++) {
     const step = traced.steps[i];
+    const stepOrder = i + 1;
+
+    // ── 1순위: LLM 이 사업 구조로 지목한 회사 ──────────────────
+    // 문자열 매칭보다 이쪽이 먼저다. "이 회사가 왜 관련되는가" 를 말할 수 있는 건
+    // 이쪽뿐이고, 그게 화면에서 유일하게 읽을 가치가 있는 정보다.
+    const named = resolveCompanyNames(
+      dict,
+      (step.companies ?? []).map((c) => c.name),
+    );
+    if (named.unresolved.length > 0) {
+      log.debug('상장사로 해석되지 않은 이름', {
+        event_id: event.id,
+        names: named.unresolved.join(', '),
+      });
+    }
+
+    const reasonByName = new Map(
+      (step.companies ?? []).map((c) => [c.name.trim(), c.reason]),
+    );
+
+    for (const hit of named.resolved) {
+      if (judged.has(hit.company.companyId) || seen.has(hit.company.companyId)) continue;
+      seen.add(hit.company.companyId);
+      rows.push({
+        companyId: hit.company.companyId,
+        direction: step.direction,
+        relationType: step.relation,
+        relevanceScore: LLM_NAMED_SCORE,
+        breakdown: llmBreakdown(),
+        rationale: reasonByName.get(hit.proposedName) ?? step.reason,
+        transmissionPath: [step.step],
+        stepOrder,
+        evidenceIds: [],
+      });
+    }
+
+    // ── 2순위: 제품 문자열 매칭 (LLM 이 아무도 못 댔을 때만) ──
+    //
+    // **LLM 이 답한 단계에서는 아예 돌리지 않는다.** 둘을 섞으면 좋은 답이 노이즈에
+    // 파묻힌다. 실측: 해상운임 급등 단계에서 LLM 은 HMM·팬오션·현대차를 댔는데,
+    // 같은 단계의 문자열 매칭이 롯데하이마트(가전 소매)와 CJ ENM(방송)을 끌고 왔다.
+    // "제품 문자열이 겹친다" 는 근거로는 그 둘을 구분할 방법이 없다.
+    if (named.resolved.length > 0) continue;
+
     const candidates = await findCandidates(supabase, toQuery(step), log, {
       // 임베딩은 별도 한도를 쓰는데, 이 경로는 LLM 이 이미 구체적인 용어를 주므로
       // 정확·동의어·부분일치만으로 충분하다.
@@ -172,7 +244,7 @@ async function traceOne(
     if (candidates.length === 0) continue;
 
     const scored = candidates
-      .map((candidate) => build(candidate, step, i + 1, toQuery(step)))
+      .map((candidate) => build(candidate, step, stepOrder, toQuery(step)))
       .filter((row): row is ImpactRow => row !== null)
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
       .slice(0, MAX_IMPACTS_PER_STEP);
@@ -216,6 +288,29 @@ async function traceOne(
     impacts: finalRows.length,
     upgraded,
     noArticle: false,
+  };
+}
+
+/**
+ * LLM 지목 종목의 점수 내역.
+ *
+ * 문자열 매칭 항목(제품·집중도·공시)은 전부 0 이다 — 그런 근거로 뽑은 것이 아니다.
+ * 화면의 점수 툴팁이 "이 종목은 왜 이 점수인가" 를 정직하게 보여줘야 하므로,
+ * 없는 근거를 채워 넣지 않는다.
+ */
+function llmBreakdown(): ScoreBreakdown {
+  return {
+    product: 0,
+    revenue: 0,
+    geography: 0,
+    supplyChain: 0,
+    disclosure: 0,
+    recency: 0,
+    thematic: 0,
+    llm: LLM_NAMED_SCORE,
+    total: LLM_NAMED_SCORE,
+    // 이유(reason)는 rationale 로 이미 화면에 나간다. 여기 또 넣으면 같은 문장이 두 번 보인다.
+    notes: ['AI 가 사업 구조로 지목 · 실존 상장사로 확인됨'],
   };
 }
 

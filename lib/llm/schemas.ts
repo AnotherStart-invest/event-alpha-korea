@@ -11,9 +11,10 @@ import {
 /**
  * LLM structured output 스키마 (LLM_PROMPTS.md P1~P4).
  *
- * 핵심 설계: **기업명을 출력할 수 있는 필드를 두지 않는다.**
- * P3 만 예외적으로 company_id 를 받되, 그것도 코드가 준 후보 목록 안의 값인지
- * 사후 검증한다. 프롬프트가 아니라 타입과 집합 검증으로 강제하는 것이 요점이다.
+ * 핵심 설계: **LLM 이 무엇을 말하든 코드가 실존을 검증한다.**
+ * P3 의 company_id 는 코드가 준 후보 목록 안의 값인지, P5 의 companies[].name 은
+ * 상장사 사전에 해석되는지 사후 검증한다. 프롬프트가 아니라 타입과 집합 검증으로
+ * 강제하는 것이 요점이다 — 그래서 없는 종목이 화면에 뜨는 일은 불가능하다.
  */
 
 const shortText = z.string().max(200);
@@ -64,8 +65,8 @@ export type EventStructure = z.infer<typeof eventStructureSchema>;
  * 철강을 사는 조선·자동차에는 긍정적이다. 용어를 한 바구니에 담으면 이걸 표현할 수 없고,
  * 그래서 수요 측 종목이 화면에 아예 안 나왔다.
  *
- * 여기서도 **기업명을 출력할 수 있는 필드는 없다.** LLM 은 "무엇이 영향받는가"를
- * 산업·제품 수준으로만 말하고, 실제 종목은 코드가 DB 에서 결정론적으로 찾는다.
+ * companies 필드로 **회사 이름을 제안할 수 있다.** 다만 lib/matching/resolve.ts 가
+ * 상장사 사전에 대조해 해석되지 않는 이름은 버린다. 아래 필드 주석 참고.
  */
 export const transmissionStepSchema = z.object({
   /** 이 단계에서 무슨 일이 일어나는가. 한 문장. */
@@ -88,6 +89,31 @@ export const transmissionStepSchema = z.object({
   relation: z.enum(RELATION_TYPES),
   /** 왜 그 방향인지. 근거 문장. */
   reason: z.string().min(5).max(200),
+  /**
+   * 이 단계에 해당하는 **국내 상장사 이름**.
+   *
+   * ⚠️ 이 필드는 원래 없었다. "LLM 은 기업명을 출력할 수 없다" 가 이 시스템의
+   * 불변식이었고, 종목은 KRX 주요제품 문자열 매칭으로만 찾았다. 그런데 그 다리가
+   * 품질의 상한이었다 — "소프트웨어 개발"(13개사) 하나로 넷마블과 셀바스AI가 같이
+   * 걸리고, 밸류체인의 전·후방은 문자열로 이을 방법이 아예 없었다.
+   *
+   * 불변식을 이렇게 바꿨다: **LLM 은 제안하고, 코드가 실존을 검증한다.**
+   * 여기 적힌 이름은 lib/matching/resolve.ts 가 상장사 사전에 대조하고,
+   * 해석되지 않으면 버린다. 그래서 없는 종목이 화면에 뜨는 일은 여전히 불가능하다.
+   */
+  companies: z
+    .array(
+      z.object({
+        /** 상장사 이름. 종목코드나 외국 기업은 쓰지 않는다. */
+        name: z.string().min(2).max(30),
+        /** 왜 이 회사인지. 사업 구조로 설명한다. */
+        reason: z.string().min(10).max(200),
+      }),
+    )
+    .max(5)
+    // LLM 이 확실한 회사를 못 대면 생략할 수 있어야 한다.
+    // 필수로 두면 억지로 채우게 되고, 그게 정확히 우리가 막으려는 행동이다.
+    .default([]),
 });
 
 export const transmissionSchema = z.object({

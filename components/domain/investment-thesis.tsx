@@ -57,59 +57,52 @@ export function InvestmentThesis({
 
   if (!hasThesisContent(event, steps, requirements)) return null;
 
+  // 한 줄에 하나씩, 최대 4줄. 펀드매니저는 이 화면을 훑지 정독하지 않는다.
+  // 재료가 많으면 각 줄에서 **가장 중요한 하나씩만** 쓰고 나머지는 접는다.
+  const chain = ordered.map((s) => s.description).join(' → ');
+  const extra = toCheck.length + invalidation.length + followUp.length - 2;
+
   return (
     <section>
-      <SectionTitle index={index} hint="이 사건을 어떻게 투자 논리로 만드는가">
-        투자 논리 구성
+      <SectionTitle index={index} hint="투자 논리">
+        한 줄 요약
       </SectionTitle>
 
       <Card>
-        <CardContent className="space-y-4 pt-4">
+        <CardContent className="space-y-1.5 pt-4 text-sm leading-relaxed">
           {event.primary_variable ? (
-            <Row label="① 무엇이 변하나">
+            <Line label="변수">
               <span className="font-medium">{event.primary_variable}</span>
               <VariableDirectionMark direction={event.variable_direction} className="ml-1" />
-              <span className="ml-2 text-xs text-muted">
-                영향 기간 {TIME_HORIZON_LABELS[event.time_horizon]}
+              <span className="ml-1.5 text-xs text-muted">
+                · {TIME_HORIZON_LABELS[event.time_horizon]}
               </span>
-            </Row>
+            </Line>
           ) : null}
 
-          {ordered.length > 0 ? (
-            <Row label="② 어떻게 번지나">
-              <ol className="space-y-1">
-                {ordered.map((step) => (
-                  <li key={step.id} className="flex gap-2 text-sm leading-relaxed">
-                    <span className="tnum shrink-0 text-muted">{step.step_order}.</span>
-                    <span>{step.description}</span>
-                  </li>
-                ))}
-              </ol>
-            </Row>
-          ) : null}
+          {chain ? <Line label="경로">{chain}</Line> : null}
 
           {toCheck.length > 0 ? (
-            <Row label="③ 무엇을 확인하나">
-              <p className="mb-1 text-xs text-muted">
-                이 숫자들을 직접 보기 전까지는 가설이다. 공시·IR 자료에서 확인한다.
-              </p>
-              <Bullets items={toCheck} />
-            </Row>
+            <Line label="확인">{toCheck[0].description}</Line>
           ) : null}
 
           {invalidation.length > 0 ? (
-            <Row label="④ 언제 틀렸다고 인정하나">
-              <p className="mb-1 text-xs text-warn">
-                하나라도 해당되면 이 논리는 성립하지 않는다.
-              </p>
-              <Bullets items={invalidation} tone="warn" />
-            </Row>
+            <Line label="반증" tone="warn">
+              {invalidation[0].description}
+            </Line>
           ) : null}
 
-          {followUp.length > 0 ? (
-            <Row label="⑤ 다음에 무엇을 보나">
-              <Bullets items={followUp} />
-            </Row>
+          {extra > 0 ? (
+            <details className="pt-1">
+              <summary className="cursor-pointer text-[11px] text-muted">
+                확인 사항·반증 조건·후속 이벤트 {extra}개 더
+              </summary>
+              <div className="mt-2 space-y-2 border-t border-border pt-2">
+                <More title="확인할 것" items={toCheck.slice(1)} />
+                <More title="반증 조건" items={invalidation.slice(1)} tone="warn" />
+                <More title="후속 이벤트" items={followUp} />
+              </div>
+            </details>
           ) : null}
         </CardContent>
       </Card>
@@ -117,30 +110,50 @@ export function InvestmentThesis({
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Line({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone?: 'warn';
+  children: React.ReactNode;
+}) {
   return (
-    <div className="grid gap-1 sm:grid-cols-[9rem_1fr] sm:gap-4">
-      <p className="text-xs font-semibold text-muted-strong">{label}</p>
-      <div className="text-sm">{children}</div>
-    </div>
+    <p className="flex gap-2">
+      <span
+        className={`mt-px shrink-0 text-[11px] font-semibold ${
+          tone === 'warn' ? 'text-warn' : 'text-muted-strong'
+        }`}
+      >
+        {label}
+      </span>
+      <span className="min-w-0">{children}</span>
+    </p>
   );
 }
 
-function Bullets({
+function More({
+  title,
   items,
   tone,
 }: {
+  title: string;
   items: Array<{ id: string; description: string }>;
   tone?: 'warn';
 }) {
+  if (items.length === 0) return null;
   return (
-    <ul className="space-y-1">
-      {items.map((item) => (
-        <li key={item.id} className="flex gap-2 text-sm leading-relaxed">
-          <span className={tone === 'warn' ? 'text-warn' : 'text-muted'}>·</span>
-          <span>{item.description}</span>
-        </li>
-      ))}
-    </ul>
+    <div>
+      <p className="text-[11px] font-semibold text-muted-strong">{title}</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {items.map((item) => (
+          <li key={item.id} className="flex gap-1.5 text-xs leading-relaxed">
+            <span className={tone === 'warn' ? 'text-warn' : 'text-muted'}>·</span>
+            <span>{item.description}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
