@@ -136,7 +136,14 @@ export async function listPublishedEvents(options: {
        event_articles(article_id)`,
     )
     .eq('status', 'published')
-    .order('published_at', { ascending: false })
+    // **화면이 보여주는 날짜로 정렬한다.**
+    // published_at(승인 시각)으로 정렬하면서 event_occurred_at(사건 시각)을 보여주고
+    // 있었다. 자동 공개는 cron 이 집어가는 시점이라 둘이 따로 놀고, 그래서 목록이
+    // 08.01 → 07.31 → 08.01 처럼 뒤죽박죽으로 보였다.
+    // 정렬 키와 표시 값이 다르면 사용자는 목록이 고장 났다고 읽는다.
+    .order('event_occurred_at', { ascending: false, nullsFirst: false })
+    // 사건 시각이 없거나 같을 때의 2차 기준.
+    .order('published_at', { ascending: false, nullsFirst: false })
     .limit(options.limit ?? 40);
 
   if (options.eventType) query = query.eq('event_type', options.eventType);
