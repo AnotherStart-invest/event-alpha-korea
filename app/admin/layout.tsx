@@ -47,10 +47,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       {user && !user.isAdmin ? (
         <div className="rounded-lg border border-warn/30 bg-warn-bg p-4 text-sm text-warn">
           <p className="font-medium">관리자 권한이 없습니다.</p>
-          <p className="mt-1 text-xs">
-            <code>python -m python.scripts.bootstrap_admin</code> 을 실행해 ADMIN_EMAIL 계정을
-            승격하세요.
-          </p>
+          <p className="mt-1 text-xs">계정에 관리자 권한이 부여되지 않았습니다.</p>
         </div>
       ) : (
         children

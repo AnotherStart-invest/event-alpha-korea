@@ -77,10 +77,7 @@ function LoginForm() {
         </CardContent>
       </Card>
 
-      <p className="mt-4 text-xs text-muted">
-        최초 1회는 로그인 후 <code>python -m python.scripts.bootstrap_admin</code> 으로 관리자
-        권한을 부여해야 합니다.
-      </p>
+
     </div>
   );
 }

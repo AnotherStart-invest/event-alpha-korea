@@ -16,14 +16,26 @@ import {
   type VariableDirection,
 } from '@/lib/db/enums';
 
-/** 근거 배지 4종 (PRODUCT_SPEC §8) */
-export type EvidenceKind = 'dart' | 'news' | 'ai' | 'none';
+/**
+ * 근거 배지 — **출처 유형**을 말한다.
+ *
+ * ⚠️ 예전에는 4종(dart/news/ai/none)뿐이라 KRX 상장법인 주요제품 자료가 "기사 확인"
+ * 으로 표시됐다. KRX 기업정보는 뉴스가 아니다. 배지가 출처를 잘못 말하면 사용자는
+ * 근거의 강도를 잘못 읽는다.
+ *
+ * 그리고 **근거의 존재와 인과관계의 강도는 다른 것**이다. "공시 확인" 은 그 문장이
+ * 공시에 있다는 뜻이지, 이 이벤트로 실적이 움직인다는 뜻이 아니다. 강도는 관련도
+ * 점수와 "왜 이 종목인가" 가 따로 말한다.
+ */
+export type EvidenceKind = 'dart' | 'news' | 'krx' | 'ir' | 'ai' | 'none';
 
 const EVIDENCE_LABEL: Record<EvidenceKind, string> = {
-  dart: '공시 확인',
-  news: '기사 확인',
-  ai: 'AI 추정',
-  none: '근거 부족',
+  dart: 'DART 공시',
+  news: '원문 뉴스',
+  krx: 'KRX 기업정보',
+  ir: '회사 IR',
+  ai: 'AI 추론',
+  none: '추가 확인 필요',
 };
 
 export function EvidenceBadge({ kind, className }: { kind: EvidenceKind; className?: string }) {
@@ -38,26 +50,32 @@ export function EvidenceBadge({ kind, className }: { kind: EvidenceKind; classNa
 function evidenceHint(kind: EvidenceKind): string {
   switch (kind) {
     case 'dart':
-      return '전자공시(DART) 원문에서 확인된 근거입니다.';
+      return '전자공시(DART) 원문에 해당 내용이 있습니다. 이 이벤트로 실적이 움직인다는 뜻은 아닙니다.';
     case 'news':
-      return '뉴스 기사에서 확인된 근거입니다.';
+      return '뉴스 기사 원문에서 확인된 근거입니다.';
+    case 'krx':
+      return 'KRX 상장법인목록의 회사 사업 설명입니다. 기사나 공시가 아닙니다.';
+    case 'ir':
+      return '회사가 배포한 IR 자료입니다.';
     case 'ai':
-      return 'AI가 생성한 분석입니다. 오류가 포함될 수 있습니다.';
+      return 'AI 가 사업 구조로 판단했습니다. 공시로 대조한 것은 아닙니다.';
     case 'none':
-      return '근거 자료가 연결되지 않아 신뢰도가 낮습니다.';
+      return '근거 자료가 연결되지 않았습니다.';
   }
 }
 
 /**
  * 근거 목록에서 가장 강한 배지를 고른다.
  *
- * `llm` 은 LLM 이 사업 구조로 지목하고 실존이 확인된 종목이다. 이쪽은 evidence 행이
- * 없어서 그냥 두면 **"근거 부족"** 으로 찍히는데, 뜻이 정반대로 읽힌다 —
- * 문자열이 우연히 겹친 종목보다 근거가 강한 쪽이다.
+ * `llm` 은 LLM 이 사업 구조로 지목하고 실존이 확인된 종목이다. evidence 행이 없어서
+ * 그냥 두면 "추가 확인 필요" 로 찍히는데 뜻이 정반대로 읽힌다.
  */
 export function strongestEvidenceKind(sourceTypes: string[], llm = false): EvidenceKind {
   if (sourceTypes.includes('dart')) return 'dart';
-  if (sourceTypes.length > 0) return 'news';
+  if (sourceTypes.includes('news')) return 'news';
+  if (sourceTypes.includes('company_ir')) return 'ir';
+  if (sourceTypes.includes('exchange')) return 'krx';
+  if (sourceTypes.length > 0) return 'none';
   if (llm) return 'ai';
   return 'none';
 }

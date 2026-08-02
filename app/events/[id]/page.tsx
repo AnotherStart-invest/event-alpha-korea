@@ -15,7 +15,7 @@ import {
   groupImpacts,
   hasDirectionJudgement,
   isAnalyzed,
-  isPeerImpact,
+  impactOrigin,
   type EventDetail,
   type ValueChain,
 } from '@/lib/queries/events';
@@ -169,17 +169,22 @@ function ValueChainSection({ detail, chain }: { detail: EventDetail; chain: Valu
  */
 function MentionOnlySections({ detail, offset }: { detail: EventDetail; offset: number }) {
   const { articles, impacts } = detail;
-  // 전파 경로로 붙은 종목은 위 밸류체인이 이미 보여줬다. 여기 또 넣으면
-  // "기사에 언급된 상장사" 라는 제목이 거짓말이 된다 — 기사에 이름이 나온 적 없다.
+  // 전파 경로로 붙은 종목은 위 밸류체인이 이미 보여줬다.
   const rest = impacts.filter((impact) => impact.step_order === null);
-  const peers = rest.filter(isPeerImpact);
-  const mentioned = rest.filter((impact) => !isPeerImpact(impact));
+
+  // ⚠️ 근거의 종류로 가른다. 예전에는 "peer 가 아니면 전부 기사 언급" 으로 취급해서
+  // KRX 주요제품 문자열이 겹쳤을 뿐인 종목이 "기사에 언급된 상장사" 로 나갔다.
+  // 실측(TSMC 구마모토 기사): 표시된 9종목이 전부 문자열 매칭, 진짜 언급은 0건.
+  const mentioned = rest.filter((i) => impactOrigin(i) === 'mention');
+  const peers = rest.filter((i) => impactOrigin(i) === 'peer');
+  const keyword = rest.filter((i) => impactOrigin(i) === 'keyword');
 
   let cursor = offset;
   const next = () => ++cursor;
   const articlesNo = next();
   const mentionedNo = mentioned.length > 0 ? next() : 0;
   const peersNo = peers.length > 0 ? next() : 0;
+  const keywordNo = keyword.length > 0 ? next() : 0;
 
   return (
     <>
@@ -217,7 +222,7 @@ function MentionOnlySections({ detail, offset }: { detail: EventDetail; offset: 
             기사에 언급된 상장사
           </SectionTitle>
           <p className="mb-2 text-xs text-muted">
-            기사 본문에 이름이 그대로 나온 종목입니다. 사전 대조로만 찾았으며, 영향의 방향이나
+            기사 본문에 회사 이름이 <strong>그대로 나온</strong> 종목입니다. 영향의 방향이나
             크기는 판정하지 않았습니다.
           </p>
           <MentionTable impacts={mentioned} />
@@ -234,6 +239,20 @@ function MentionOnlySections({ detail, offset }: { detail: EventDetail; offset: 
             기사에 직접 언급되지는 않았고, 영향의 방향이나 크기도 판정하지 않았습니다.
           </p>
           <MentionTable impacts={peers} kind="peer" />
+        </section>
+      ) : null}
+
+      {keyword.length > 0 ? (
+        <section>
+          <SectionTitle index={keywordNo} hint={`${keyword.length}종목`}>
+            키워드로 검색된 후보 기업
+          </SectionTitle>
+          <p className="mb-2 text-xs text-warn">
+            <strong>기사에 이름이 나온 종목이 아닙니다.</strong> 이벤트 키워드가 이 회사의
+            KRX 주요제품 설명과 겹쳐 검색됐을 뿐이며, 아래 인용문도 기사 문장이 아니라
+            회사의 사업 설명입니다. 실제 영향은 확인되지 않았습니다.
+          </p>
+          <MentionTable impacts={keyword} kind="keyword" />
         </section>
       ) : null}
     </>

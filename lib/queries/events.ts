@@ -75,6 +75,48 @@ export function isPeerImpact(impact: ImpactWithCompany): boolean {
   return typeof (impact.score_breakdown as ScoreBreakdown)?.peer === 'number';
 }
 
+/**
+ * 이 종목이 **어떤 근거로** 붙었는가.
+ *
+ * ⚠️ 화면이 이걸 틀리게 부르고 있었다. "peer 가 아니면 전부 기사 언급" 으로 취급해서,
+ * KRX 주요제품 문자열이 겹쳤을 뿐인 종목이 **"기사에 언급된 상장사"** 로 나갔다.
+ *
+ * 실측(TSMC 구마모토 공장 중단 기사): 표시된 9종목이 **전부** 문자열 매칭이었고
+ * 진짜 기사 언급은 0건이었다. 롯데하이마트·CJ ENM 은 원문에 나오지도 않는다.
+ * 근거로 보여준 문장조차 기사가 아니라 그 회사의 KRX 주요제품 설명이었다.
+ *
+ * 이건 정확도 문제가 아니라 **라벨이 사실이 아닌** 문제다. 종류를 데이터로 판정한다.
+ */
+export type ImpactOrigin = 'mention' | 'llm' | 'peer' | 'keyword';
+
+export function impactOrigin(impact: ImpactWithCompany): ImpactOrigin {
+  const b = impact.score_breakdown as ScoreBreakdown;
+  if (typeof b?.mention === 'number') return 'mention';
+  if (typeof b?.llm === 'number') return 'llm';
+  if (typeof b?.peer === 'number') return 'peer';
+  return 'keyword';
+}
+
+/** 기사 본문에 회사 이름이 실제로 나온 종목인가. */
+export function isMentionImpact(impact: ImpactWithCompany): boolean {
+  return impactOrigin(impact) === 'mention';
+}
+
+export const ORIGIN_LABELS: Record<ImpactOrigin, string> = {
+  mention: '원문 직접 언급',
+  llm: 'AI 사업구조 판단',
+  peer: '같은 제품군',
+  keyword: '키워드 검색 후보',
+};
+
+export const ORIGIN_HINTS: Record<ImpactOrigin, string> = {
+  mention: '기사 본문에 회사 이름이 그대로 나왔습니다.',
+  llm: 'AI 가 사업 구조로 지목하고 상장사 사전에서 실존을 확인했습니다. 기사에 이름이 나온 것은 아닙니다.',
+  peer: '이미 붙은 종목과 주요제품이 겹칩니다. 기사에 이름이 나온 것은 아닙니다.',
+  keyword:
+    '이벤트 키워드가 이 회사의 KRX 주요제품 설명과 겹쳐 검색된 후보입니다. **기사에 이름이 나온 것이 아니며**, 실제 영향은 확인되지 않았습니다.',
+};
+
 export type ImpactWithCompany = Pick<
   EventImpactRow,
   | 'id'
@@ -325,7 +367,7 @@ export function compareForDisplay(a: ImpactWithCompany, b: ImpactWithCompany): n
  * 단계별 레인보다 조금 넉넉하다 — 여기는 단계 구분이 없어 표가 하나뿐이라서
  * 3개만 실으면 정보가 지나치게 깎인다.
  */
-export const VISIBLE_PER_GROUP = 6;
+export const VISIBLE_PER_GROUP = 5;
 
 function byRelevance(a: ImpactWithCompany, b: ImpactWithCompany): number {
   if (a.relevance_score !== b.relevance_score) return b.relevance_score - a.relevance_score;

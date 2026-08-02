@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Table, Td, Th } from '@/components/ui/primitives';
 import { LiveQuote } from './live-quote';
 import { formatDate } from '@/lib/shared/format';
-import type { ImpactWithCompany } from '@/lib/queries/events';
+import { VISIBLE_PER_GROUP, compareForDisplay, type ImpactWithCompany } from '@/lib/queries/events';
 
 /**
  * 근거가 한 줄뿐인 종목을 보여주는 표.
@@ -22,19 +22,27 @@ export function MentionTable({
   kind = 'mention',
 }: {
   impacts: ImpactWithCompany[];
-  kind?: 'mention' | 'peer';
+  kind?: 'mention' | 'peer' | 'keyword';
 }) {
   if (impacts.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted">
-        {kind === 'peer'
-          ? '같은 제품군의 다른 상장사를 찾지 못했습니다.'
-          : '기사에서 상장사 이름을 찾지 못했습니다.'}
+        {kind === 'mention'
+          ? '기사에서 상장사 이름을 찾지 못했습니다.'
+          : '해당 종목이 없습니다.'}
       </p>
     );
   }
 
-  const reasonHeader = kind === 'peer' ? '겹치는 제품' : '언급된 대목';
+  // 상한을 건다. 20개를 늘어놓는 것보다 틀리지 않는 5개가 낫다.
+  const ranked = [...impacts].sort(compareForDisplay);
+  const shown = ranked.slice(0, VISIBLE_PER_GROUP);
+  const hidden = ranked.length - shown.length;
+
+  // 열 제목이 근거의 성격을 정확히 말해야 한다. 문자열 매칭 결과에 "언급된 대목" 이라고
+  // 붙이면, 인용된 것이 기사 문장이라는 뜻이 되어 사실이 아니게 된다.
+  const reasonHeader =
+    kind === 'peer' ? '겹치는 제품' : kind === 'keyword' ? '겹친 사업 설명' : '언급된 대목';
 
   return (
     <>
@@ -52,7 +60,7 @@ export function MentionTable({
             </tr>
           </thead>
           <tbody>
-            {impacts.map((impact) => (
+            {shown.map((impact) => (
               <tr key={impact.id} className="align-top">
                 <Td className="font-medium">
                   <CompanyLink impact={impact} />
@@ -76,7 +84,7 @@ export function MentionTable({
 
       {/* 모바일 */}
       <ul className="space-y-2 md:hidden">
-        {impacts.map((impact) => (
+        {shown.map((impact) => (
           <li key={impact.id} className="rounded-lg border border-border bg-surface p-3">
             <p className="text-sm font-semibold">
               <CompanyLink impact={impact} />
@@ -96,6 +104,10 @@ export function MentionTable({
           </li>
         ))}
       </ul>
+
+      {hidden > 0 ? (
+        <p className="mt-1.5 text-[11px] text-muted">표시하지 않은 종목 {hidden}개</p>
+      ) : null}
     </>
   );
 }
@@ -109,7 +121,13 @@ function CompanyLink({ impact }: { impact: ImpactWithCompany }) {
   );
 }
 
-function Reason({ impact, kind }: { impact: ImpactWithCompany; kind: 'mention' | 'peer' }) {
+function Reason({
+  impact,
+  kind,
+}: {
+  impact: ImpactWithCompany;
+  kind: 'mention' | 'peer' | 'keyword';
+}) {
   // 동종 확장은 기사 근거가 없다. 근거는 "무슨 제품이 겹치는가"이고
   // 그건 score_breakdown 의 notes 에 그대로 적혀 있다.
   if (kind === 'peer') {
@@ -121,6 +139,21 @@ function Reason({ impact, kind }: { impact: ImpactWithCompany; kind: 'mention' |
 
   const evidence = impact.evidence[0];
   if (!evidence) return <span className="text-[11px] text-muted">근거 없음</span>;
+
+  // ⚠️ 키워드 매칭의 인용문은 **기사 문장이 아니라 회사의 KRX 주요제품 설명**이다.
+  // 그냥 큰따옴표로 묶어 놓으면 기사에서 따온 것처럼 읽힌다.
+  if (kind === 'keyword') {
+    return (
+      <div className="text-xs leading-relaxed">
+        {evidence.excerpt ? (
+          <p className="text-muted-strong">&ldquo;{evidence.excerpt}&rdquo;</p>
+        ) : null}
+        <p className="mt-1 text-[11px] text-warn">
+          출처: {evidence.source_title} — 기사 문장이 아니라 회사 사업 설명입니다
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="text-xs leading-relaxed">

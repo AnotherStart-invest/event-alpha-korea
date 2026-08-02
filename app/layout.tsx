@@ -39,14 +39,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </Link>
               ))}
             </nav>
-            <div className="ml-auto">
-              <Link
-                href="/admin"
-                className="text-xs text-muted transition-colors hover:text-foreground"
-              >
-                관리자
-              </Link>
-            </div>
           </div>
         </header>
 
