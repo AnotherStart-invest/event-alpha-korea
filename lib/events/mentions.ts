@@ -35,6 +35,22 @@ const MAX_COMPANIES_PER_EVENT = 15;
 /** 언급 매칭 대상 상태. rejected·failed 는 건드리지 않는다. */
 const TARGET_STATUSES: EventStatus[] = ['candidate', 'analyzed', 'pending_review', 'published'];
 
+/**
+ * 한 번에 훑을 이벤트 수의 **기본 상한**.
+ *
+ * ⚠️ 이게 없어서 프로덕션의 이 잡이 죽어 있었다. cron 라우트는 limit 쿼리 파라미터가
+ * 없으면 undefined 를 넘기는데, `if (options.limit)` 이라 상한이 아예 안 걸렸다.
+ * 그 결과 매 실행이 대상 이벤트 **전부**(실측 880건)를 훑었고, 이벤트당 쿼리 2회씩
+ * 1,760회 왕복에 **72초**가 걸렸다. Vercel 함수 제한은 60초다.
+ *
+ * 죽는 방식이 고약하다 — 함수가 잘리면서 pipeline_runs.finished_at 을 못 남기고,
+ * 그 좀비 행이 job_is_running 판정에 걸려 다음 실행을 10분간 통째로 막는다.
+ * 그래서 로그에는 `already_running` 만 반복해서 찍히고, 정작 일은 한 번도 안 끝난다.
+ *
+ * 최신순으로 훑으므로 이 상한이면 tick 당 새 이벤트(보통 1~4건)를 충분히 덮는다.
+ */
+export const MENTIONS_EVENT_LIMIT = 40;
+
 type EventRow = { id: string; status: EventStatus };
 
 type ArticleRow = {
@@ -178,7 +194,7 @@ async function loadEvents(
     .order('event_occurred_at', { ascending: false });
 
   if (options.eventIds?.length) query = query.in('id', options.eventIds);
-  if (options.limit) query = query.limit(options.limit);
+  query = query.limit(options.limit ?? MENTIONS_EVENT_LIMIT);
 
   const { data, error } = await query;
   if (error) throw new Error(`이벤트 조회 실패: ${error.message}`);

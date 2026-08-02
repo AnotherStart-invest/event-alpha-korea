@@ -29,6 +29,8 @@ import { hasMentionAnchor } from './anchor';
 export type AnalyzeStats = {
   processed: number;
   published: number; // pending_review 로 넘어간 수
+  /** 기사에 상장사 이름이 없어 LLM 을 쓰지 않고 걸러낸 수 */
+  skippedNoAnchor: number;
   rejected: number;
   failed: number;
   impacts: number;
@@ -63,7 +65,15 @@ export async function analyzePendingEvents(
     .maybeSingle();
 
   if (settings?.analyze_enabled === false) {
-    return { processed: 0, published: 0, rejected: 0, failed: 0, impacts: 0, droppedUnknownCompany: 0 };
+    return {
+      processed: 0,
+      published: 0,
+      rejected: 0,
+      failed: 0,
+      impacts: 0,
+      droppedUnknownCompany: 0,
+      skippedNoAnchor: 0,
+    };
   }
 
   const limit =
@@ -95,10 +105,28 @@ export async function analyzePendingEvents(
     failed: 0,
     impacts: 0,
     droppedUnknownCompany: 0,
+    skippedNoAnchor: 0,
   };
 
   for (const event of (queue ?? []) as QueuedEvent[]) {
     try {
+      // ── LLM 을 쓰기 전에 앵커부터 확인한다 ────────────────────
+      //
+      // 기사에 상장사 이름이 없는 이벤트는 공개 게이트(anchor.ts)에서 어차피
+      // 막힌다. 그런데 지금까지는 그 판정을 **공개 시점에만** 하고 호출 시점에는
+      // 안 해서, 공개될 수 없는 이벤트에 LLM 을 쓰고 있었다.
+      //
+      // 실측(2026-08-01): 하루 972회 호출 중 238회가 429. 공개된 488건 중
+      // 297건(61%)이 앵커가 없었다 — 그만큼이 통째로 낭비였다.
+      // cron 순서가 mentions → analyze 라 이 시점엔 앵커 여부를 이미 알 수 있다.
+      if (!(await hasMentionAnchor(supabase, event.id))) {
+        await rejectWithoutAnchor(supabase, event.id);
+        stats.processed++;
+        stats.rejected++;
+        stats.skippedNoAnchor++;
+        continue;
+      }
+
       const outcome = await analyzeOne(supabase, log, event, config);
       stats.processed++;
       if (outcome.rejected) stats.rejected++;
@@ -312,6 +340,24 @@ async function finish(
     )
     .eq('id', eventId);
   if (error) throw new Error(`이벤트 상태 갱신 실패: ${error.message}`);
+}
+
+/**
+ * 기사에 상장사 이름이 없어 분석 가치가 없는 이벤트를 큐에서 뺀다.
+ *
+ * **candidate 로 두면 안 된다.** 매 tick 마다 다시 뽑혀 limit 를 차지하고,
+ * 정작 분석해야 할 새 이벤트가 밀린다. 상태를 확정해 큐에서 빼야 한다.
+ */
+async function rejectWithoutAnchor(supabase: ServiceClient, eventId: string): Promise<void> {
+  const { error } = await supabase
+    .from('events')
+    .update({
+      status: 'rejected',
+      reviewed_at: new Date().toISOString(),
+      last_error: '기사에 상장사 이름이 없어 분석하지 않음',
+    })
+    .eq('id', eventId);
+  if (error) throw new Error(`앵커 없는 이벤트 정리 실패: ${error.message}`);
 }
 
 /* ── 저장 ─────────────────────────────────────────────── */

@@ -145,6 +145,17 @@ async function traceOne(
     return { traceable: false, steps: 0, impacts: 0, upgraded: 0, noArticle: true };
   }
 
+  // ── LLM 을 쓰기 전에 앵커부터 확인한다 ──────────────────────
+  //
+  // 아래 공개 게이트와 같은 조건이다. 그런데 그건 **호출을 다 하고 나서** 판정하므로,
+  // 공개되지 못할 이벤트에도 LLM 이 이미 나간 뒤다. 무료 티어에서는 호출 수가 곧
+  // 한도라 이 순서가 그대로 비용이 된다 (실측 2026-08-01: 하루 972회 중 238회가 429).
+  if (!(await hasMentionAnchor(supabase, event.id))) {
+    log.debug('기사에 상장사 이름이 없어 전파 경로를 그리지 않음', { event_id: event.id });
+    await markTraced(supabase, event.id);
+    return { traceable: false, steps: 0, impacts: 0, upgraded: 0, noArticle: false };
+  }
+
   const result = await callLlm(
     supabase,
     { purpose: 'transmission', eventId: event.id },
@@ -264,14 +275,8 @@ async function traceOne(
   await persistImpacts(supabase, event.id, finalRows);
   await markTraced(supabase, event.id);
 
-  // 기사에 상장사 이름이 나오지 않은 이벤트는 공개하지 않는다.
-  // 전파 경로는 LLM 이 만든 용어로 종목을 찾으므로 그 자체로는 기사에 앵커되지 않는다.
-  if (
-    autoPublish &&
-    finalRows.length > 0 &&
-    event.status !== 'published' &&
-    (await hasMentionAnchor(supabase, event.id))
-  ) {
+  // 앵커는 위에서 이미 확인했다(없으면 여기까지 오지 않는다).
+  if (autoPublish && finalRows.length > 0 && event.status !== 'published') {
     await publish(supabase, event.id);
   }
 
