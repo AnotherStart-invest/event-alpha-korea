@@ -21,6 +21,7 @@ export type MentionStats = {
   articles: number;
   impacts: number;
   skippedExisting: number;
+  /** 항상 0. 공개는 analyze 가 분류를 끝낸 뒤에 한다(위 주석 참고). */
   published: number;
 };
 
@@ -71,7 +72,7 @@ export async function linkMentionedCompanies(
 
   const { data: settings } = await supabase
     .from('app_settings')
-    .select('mentions_enabled, auto_publish')
+    .select('mentions_enabled')
     .eq('id', 1)
     .maybeSingle();
 
@@ -128,10 +129,20 @@ export async function linkMentionedCompanies(
     const inserted = await insertImpacts(supabase, event.id, fresh, evidenceByCompany);
     stats.impacts += inserted;
 
-    if (settings?.auto_publish && inserted > 0 && event.status !== 'published') {
-      await publish(supabase, event.id);
-      stats.published++;
-    }
+    // ⚠️ **여기서 공개하지 않는다.**
+    //
+    // 예전에는 언급 종목을 찾으면 바로 published 로 올렸다. LLM 없이 화면을 채우려는
+    // 설계였는데, 그 대가가 컸다 — analyze 의 큐는 `status in (candidate, failed)` 라
+    // **한 번 공개된 이벤트는 영영 분석되지 않는다.** 그래서 event_type 이 null 로 남고
+    // 화면에 "분류 전" 으로 뜬다.
+    //
+    // 실측(2026-08-12): 공개 3,227건 중 **3,064건(95%)이 분류 전**이었다.
+    //
+    // 순서를 바로잡는다: mentions 는 종목만 붙이고, 공개는 analyze 가 분류를 끝낸 뒤
+    // 한다. analyze 는 앵커가 있는 이벤트만 분석하므로(anchor.ts) 여기서 붙인 종목이
+    // 곧 분석 대상 표시가 된다.
+    void inserted;
+
   }
 
   log.info('언급 매칭 완료', { ...stats });
@@ -345,15 +356,3 @@ async function insertImpacts(
   return data?.length ?? 0;
 }
 
-/**
- * MVP 자동 공개. app_settings.auto_publish 가 켜져 있을 때만 불린다.
- * published_requires_ts 제약 때문에 두 타임스탬프를 반드시 같이 채워야 한다.
- */
-async function publish(supabase: ServiceClient, eventId: string): Promise<void> {
-  const now = new Date().toISOString();
-  const { error } = await supabase
-    .from('events')
-    .update({ status: 'published', published_at: now, approved_at: now, reviewed_at: now })
-    .eq('id', eventId);
-  if (error) throw new Error(`자동 공개 실패: ${error.message}`);
-}

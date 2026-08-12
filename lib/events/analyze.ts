@@ -93,7 +93,17 @@ export async function analyzePendingEvents(
     .select('id, title, status, retry_count')
     .in('status', ['candidate', 'failed'])
     .lt('retry_count', MAX_RETRY)
-    .order('event_occurred_at', { ascending: true })
+    // **최신순이다.** 오름차순(오래된 것부터)이었는데, 그게 "기사가 바로 분류되지
+    // 않는" 원인이었다.
+    //
+    // 실측(2026-08-02): candidate 백로그 2,807건. tick 당 3건씩 처리하니 새로 들어온
+    // 기사는 큐 맨 뒤에 서서 **3일**을 기다렸다. 게다가 mentions 는 최신 40건에만
+    // 앵커를 붙이는데(내림차순) analyze 는 가장 오래된 것부터 봤다 —
+    // **두 잡이 정반대 방향을 봐서 서로 만나지 못했다.** analyze 로그가 매번
+    // `processed: 3, rejected: 3` 이었던 이유다: 앵커 없는 옛 이벤트만 계속 기각했다.
+    //
+    // 뉴스 서비스에서 오래된 사건을 먼저 처리할 이유가 없다. 방향을 맞춘다.
+    .order('event_occurred_at', { ascending: false, nullsFirst: false })
     .limit(limit);
 
   if (error) throw new Error(`분석 큐 조회 실패: ${error.message}`);
