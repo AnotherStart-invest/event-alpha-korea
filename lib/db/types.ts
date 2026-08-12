@@ -152,6 +152,11 @@ export type EventRow = Timestamps & {
   approved_at: string | null;
   /** 전파 경로 추적을 시도한 시각. 경로를 못 그려도 채운다 (0007) */
   traced_at: string | null;
+  /**
+   * 텔레그램 채널에 게시한 시각 (0011). null 이면 아직 안 보냈다.
+   * 게이트에서 떨어진 이벤트도 채워 넣는다 — 매 tick 다시 후보로 올라오면 낭비다.
+   */
+  broadcast_at: string | null;
 }
 
 export type EventArticleRow = {
