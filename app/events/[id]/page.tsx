@@ -13,6 +13,7 @@ import {
   buildValueChain,
   getPublishedEvent,
   groupImpacts,
+  isTrusted,
   hasDirectionJudgement,
   isAnalyzed,
   impactOrigin,
@@ -184,7 +185,6 @@ function MentionOnlySections({ detail, offset }: { detail: EventDetail; offset: 
   const articlesNo = next();
   const mentionedNo = mentioned.length > 0 ? next() : 0;
   const peersNo = peers.length > 0 ? next() : 0;
-  const keywordNo = keyword.length > 0 ? next() : 0;
 
   return (
     <>
@@ -231,7 +231,7 @@ function MentionOnlySections({ detail, offset }: { detail: EventDetail; offset: 
 
       {peers.length > 0 ? (
         <section>
-          <SectionTitle index={peersNo} hint={`${peers.length}종목`}>
+          <SectionTitle index={peersNo} hint={`${peers.length}종목 · 참고`}>
             같은 제품군 상장사
           </SectionTitle>
           <p className="mb-2 text-xs text-muted">
@@ -244,15 +244,25 @@ function MentionOnlySections({ detail, offset }: { detail: EventDetail; offset: 
 
       {keyword.length > 0 ? (
         <section>
-          <SectionTitle index={keywordNo} hint={`${keyword.length}종목`}>
-            키워드로 검색된 후보 기업
-          </SectionTitle>
-          <p className="mb-2 text-xs text-warn">
-            <strong>기사에 이름이 나온 종목이 아닙니다.</strong> 이벤트 키워드가 이 회사의
-            KRX 주요제품 설명과 겹쳐 검색됐을 뿐이며, 아래 인용문도 기사 문장이 아니라
-            회사의 사업 설명입니다. 실제 영향은 확인되지 않았습니다.
-          </p>
-          <MentionTable impacts={keyword} kind="keyword" />
+          {/*
+            기본 화면에서 뺀다. 실측(공개 종목 3,000건)으로 키워드 매칭이 77% 였고
+            공개 이벤트의 49% 가 이것만으로 채워져 있었다. 근거 없는 종목을 펼쳐 놓는
+            것보다 "확인된 종목이 없다" 가 사실에 가깝고 신뢰에도 낫다.
+            지우지는 않는다 — 검수와 추후 재분석에 필요하다.
+          */}
+          <details className="rounded-lg border border-dashed border-border-strong">
+            <summary className="cursor-pointer px-4 py-3 text-xs text-muted-strong">
+              키워드로 검색된 후보 {keyword.length}종목 — 근거가 확인되지 않아 접어 둠
+            </summary>
+            <div className="border-t border-border p-3">
+              <p className="mb-2 text-xs text-warn">
+                <strong>기사에 이름이 나온 종목이 아닙니다.</strong> 이벤트 키워드가 이
+                회사의 KRX 주요제품 설명과 겹쳐 검색됐을 뿐이며, 아래 인용문도 기사
+                문장이 아니라 회사의 사업 설명입니다. 실제 영향은 확인되지 않았습니다.
+              </p>
+              <MentionTable impacts={keyword} kind="keyword" />
+            </div>
+          </details>
         </section>
       ) : null}
     </>
@@ -265,7 +275,10 @@ function AnalyzedSections({ detail, offset }: { detail: EventDetail; offset: num
   // 밸류체인이 이미 보여준 종목은 아래 표에서 뺀다. 같은 종목을 두 번 세면
   // 화면이 길어지기만 하고 "몇 개가 관련 있나"라는 감각이 무너진다.
   const rest = offset > 0 ? impacts.filter((i) => i.step_order === null) : impacts;
-  const groups = groupImpacts(rest);
+  // 키워드 문자열 매칭 종목은 기본 화면에서 뺀다. 아래 "확인되지 않은 후보" 로 접어 둔다.
+  const trusted = rest.filter(isTrusted);
+  const untrusted = rest.filter((i) => !isTrusted(i));
+  const groups = groupImpacts(trusted);
   const judged = hasDirectionJudgement(rest);
 
   // 섹션 번호를 손으로 매기면 분기마다 어긋난다 — 전파 경로 섹션을 걷어냈을 때
@@ -377,8 +390,25 @@ function AnalyzedSections({ detail, offset }: { detail: EventDetail; offset: num
       </section>
       ) : null}
 
-      <Separator />
-
+      {/*
+        키워드 문자열 매칭만으로 붙은 종목. 기본 화면에서 뺀다.
+        실측(공개 종목 3,000건)으로 이 경로가 77% 였고 공개 이벤트의 49% 가
+        이것만으로 채워져 있었다. 지우지는 않는다 — 검수와 재분석에 필요하다.
+      */}
+      {untrusted.length > 0 ? (
+        <details className="rounded-lg border border-dashed border-border-strong">
+          <summary className="cursor-pointer px-4 py-3 text-xs text-muted-strong">
+            키워드로 검색된 후보 {untrusted.length}종목 — 근거가 확인되지 않아 접어 둠
+          </summary>
+          <div className="border-t border-border p-3">
+            <p className="mb-2 text-xs text-warn">
+              <strong>기사에 이름이 나온 종목이 아닙니다.</strong> 이벤트 키워드가 회사의
+              사업 설명과 겹쳐 검색됐을 뿐이며, 실제 영향은 확인되지 않았습니다.
+            </p>
+            <ImpactTable impacts={untrusted} />
+          </div>
+        </details>
+      ) : null}
     </>
   );
 }

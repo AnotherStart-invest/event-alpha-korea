@@ -34,6 +34,7 @@ function impact(
     marketCap?: number | null;
     market?: string;
     focus?: number;
+    origin?: 'keyword';
   } = {},
 ): ImpactWithCompany {
   const { score = 35, stepOrder = 1, productCount = 1, marketCap = 1_000_000_000_000 } = overrides;
@@ -48,10 +49,14 @@ function impact(
     transmission_path: [],
     step_order: stepOrder,
     missing_evidence: [],
-    score_breakdown:
-      overrides.focus === undefined
-        ? ({ total: score, notes: [] } as never)
-        : ({ total: score, focus: overrides.focus, notes: [] } as never),
+    // 밸류체인 레인에는 **믿을 만한 근거**(원문 언급/AI 지목)만 오른다.
+    // 기본 픽스처를 llm 로 두는 이유다 — 마커가 없으면 키워드 매칭으로 취급돼 걸러진다.
+    score_breakdown: {
+      total: score,
+      llm: overrides.origin === 'keyword' ? undefined : score,
+      ...(overrides.focus === undefined ? {} : { focus: overrides.focus }),
+      notes: [],
+    } as never,
     company: {
       id: `c-${name}`,
       company_name: name,
@@ -154,6 +159,25 @@ describe('buildValueChain — 노출 제한', () => {
     );
     expect(chain.lanes[0].shown.map((i) => i.company?.company_name)).toEqual(['코스피종목']);
     expect(chain.lanes[0].hiddenCount).toBe(1);
+  });
+});
+
+describe('buildValueChain — 근거 없는 종목 배제', () => {
+  it('키워드 문자열 매칭만으로 붙은 종목은 레인에 올리지 않는다', () => {
+    // 실측(공개 종목 3,000건): 키워드 매칭이 77% 였고 공개 이벤트의 49% 가
+    // 이것만으로 채워져 있었다. 단계가 논리적이어도 그 단계에 어느 회사가
+    // 걸리는지를 문자열로 고른 것이라 "왜 이 회사인가" 를 말하지 못한다.
+    const chain = buildValueChain(
+      [step(1)],
+      [impact('키워드종목', { origin: 'keyword' }), impact('AI지목종목')],
+    );
+    expect(chain.lanes[0].shown.map((i) => i.company?.company_name)).toEqual(['AI지목종목']);
+    expect(chain.lanes[0].hiddenCount).toBe(1);
+  });
+
+  it('키워드 종목만 있으면 밸류체인을 그리지 않는다 — 빈 화면이 사실에 가깝다', () => {
+    const chain = buildValueChain([step(1)], [impact('키워드종목', { origin: 'keyword' })]);
+    expect(chain.hasChain).toBe(false);
   });
 });
 

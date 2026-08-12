@@ -109,6 +109,24 @@ export const ORIGIN_LABELS: Record<ImpactOrigin, string> = {
   keyword: '키워드 검색 후보',
 };
 
+/**
+ * 기본 화면에 내보낼 만한 근거인가.
+ *
+ * 실측(2026-08-02, 공개 종목 3,000건): 키워드 문자열 매칭이 **77%**(2,324건)이고
+ * 공개 이벤트 513건 중 **249건(49%)** 이 키워드·동종 매칭만으로 채워져 있었다.
+ * 아무 이벤트나 열면 절반의 확률로 근거가 하나도 없는 목록을 보게 된다는 뜻이다.
+ *
+ * "관련 종목 20개보다 직접 수혜 1개" 가 맞다. 키워드·동종 매칭은 기본 화면에서 빼고
+ * 접어 둔다 — 지우지는 않는다. 근거가 생기면 다시 올라와야 하고, 검수에도 필요하다.
+ */
+export function isTrustedOrigin(origin: ImpactOrigin): boolean {
+  return origin === 'mention' || origin === 'llm';
+}
+
+export function isTrusted(impact: ImpactWithCompany): boolean {
+  return isTrustedOrigin(impactOrigin(impact));
+}
+
 export const ORIGIN_HINTS: Record<ImpactOrigin, string> = {
   mention: '기사 본문에 회사 이름이 그대로 나왔습니다.',
   llm: 'AI 가 사업 구조로 지목하고 상장사 사전에서 실존을 확인했습니다. 기사에 이름이 나온 것은 아닙니다.',
@@ -174,7 +192,7 @@ export async function listPublishedEvents(options: {
     .from('events')
     .select(
       `${CARD_COLUMNS},
-       event_impacts(impact_direction, relevance_score, company:companies(company_name, stock_code)),
+       event_impacts(impact_direction, relevance_score, score_breakdown, company:companies(company_name, stock_code)),
        event_articles(article_id)`,
     )
     .eq('status', 'published')
@@ -198,13 +216,22 @@ export async function listPublishedEvents(options: {
     event_impacts: Array<{
       impact_direction: ImpactDirection;
       relevance_score: number;
+      score_breakdown: ScoreBreakdown | null;
       company: JoinedCompany | JoinedCompany[] | null;
     }> | null;
     event_articles: Array<{ article_id: string }> | null;
   };
 
   return ((data ?? []) as unknown as Joined[]).map((row) => {
-    const impacts = row.event_impacts ?? [];
+    const all = row.event_impacts ?? [];
+
+    // 카드가 첫인상이다. 키워드 매칭 종목 이름을 여기 걸면 사이트 전체가
+    // 근거 없는 종목 추천처럼 보인다. 믿을 만한 근거가 있는 것만 쓴다.
+    const impacts = all.filter((i) => {
+      const b = i.score_breakdown;
+      return typeof b?.mention === 'number' || typeof b?.llm === 'number';
+    });
+
     const topCompanies = [...impacts]
       .sort((a, b) => b.relevance_score - a.relevance_score)
       .map((i) => (Array.isArray(i.company) ? i.company[0] : i.company))
@@ -401,7 +428,13 @@ function isTradable(impact: ImpactWithCompany): boolean {
 function rankForDisplay(impacts: ImpactWithCompany[], limit = VISIBLE_PER_STEP) {
   const eligible = impacts
     .filter(
-      (i) => isTradable(i) && (!isRescored(i) || i.relevance_score >= DISPLAY_SCORE_FLOOR),
+      (i) =>
+        isTradable(i) &&
+        // 키워드 문자열 매칭만으로 붙은 종목은 밸류체인 레인에도 올리지 않는다.
+        // 단계가 논리적이어도 그 단계에 **어느 회사가 걸리는지**를 문자열로 고른
+        // 것이라, "왜 이 회사인가" 를 말하지 못한다.
+        isTrusted(i) &&
+        (!isRescored(i) || i.relevance_score >= DISPLAY_SCORE_FLOOR),
     )
     .sort(byRelevance);
 
